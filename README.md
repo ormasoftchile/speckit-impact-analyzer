@@ -136,16 +136,25 @@ Test Coverage:               175 tests
 ```
 speckit-impact-analyzer/
 ├── bin/
-│   └── analyze-impact          # Main entry point
-├── lib/
-│   ├── metrics.sh              # Code metrics collection
-│   ├── timeline.sh             # Git timeline analysis
-│   ├── classifier.sh           # File classification
-│   └── report.sh               # Report generation
+│   ├── analyze-impact          # Main entry point
+│   └── aggregate-portfolio     # Portfolio aggregator
 ├── templates/
 │   ├── impact-config.example.yaml
 │   └── report-template.md
 └── README.md
+```
+
+## 📊 Portfolio Aggregation
+
+Combine multiple project reports into an executive dashboard:
+
+```bash
+./bin/aggregate-portfolio \
+  -t "My VS Code Extensions" \
+  -o PORTFOLIO_DASHBOARD.md \
+  project1/impact-metrics.json \
+  project2/impact-metrics.json \
+  project3/impact-metrics.json
 ```
 
 ## 📖 Methodology
