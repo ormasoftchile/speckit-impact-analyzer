@@ -1,0 +1,99 @@
+# Spec-Kit Impact Analyzer Configuration
+# Copy this file to your project root as: impact-config.yaml
+
+# ═══════════════════════════════════════════════════════════════════════
+# PROJECT METADATA
+# ═══════════════════════════════════════════════════════════════════════
+project:
+  name: "My Project Name"
+  type: "vscode-extension"  # vscode-extension, node-cli, web-app, library
+  description: "Brief description of the project"
+
+# ═══════════════════════════════════════════════════════════════════════
+# SOURCE CODE PATHS
+# ═══════════════════════════════════════════════════════════════════════
+paths:
+  source: "src/"           # Main source directory
+  tests: "test/"           # Test directory
+  specs: "specs/"          # Spec-Kit specifications
+  exclude:                 # Directories to exclude from analysis
+    - "node_modules"
+    - "out"
+    - "dist"
+    - ".vscode-test"
+
+# ═══════════════════════════════════════════════════════════════════════
+# FILE CLASSIFICATION
+# Map file patterns to categories: boilerplate, glue_code, core_logic
+# Use glob patterns relative to source directory
+# ═══════════════════════════════════════════════════════════════════════
+classification:
+  boilerplate:
+    # Extension entry points, manifests, type definitions
+    - "extension.ts"
+    - "types/**/*.ts"
+    - "config/**/*.ts"
+    # Add patterns for config files, type definitions, etc.
+    
+  glue_code:
+    # Commands, event handlers, UI bindings, utilities
+    - "commands/**/*.ts"
+    - "utils/**/*.ts"
+    - "webview/**/*.ts"
+    - "handlers/**/*.ts"
+    # Add patterns for integration code
+    
+  core_logic:
+    # Unique algorithms, business logic, core functionality
+    - "core/**/*.ts"
+    - "conversion/**/*.ts"
+    - "engine/**/*.ts"
+    - "services/**/*.ts"
+    # Add patterns for core business logic
+
+# ═══════════════════════════════════════════════════════════════════════
+# TIME MULTIPLIERS
+# Estimated hours to write 100 lines of code WITHOUT AI assistance
+# Adjust based on your experience and project complexity
+# ═══════════════════════════════════════════════════════════════════════
+multipliers:
+  boilerplate: 0.5   # Quick to write, lots of copy-paste
+  glue_code: 1.5     # Moderate complexity, some research needed
+  core_logic: 4.0    # Complex, requires deep thinking and iteration
+
+# ═══════════════════════════════════════════════════════════════════════
+# AI ASSISTANCE ESTIMATES
+# Percentage of code in each category that was AI-assisted
+# Be conservative for credibility
+# ═══════════════════════════════════════════════════════════════════════
+ai_percent:
+  boilerplate: 90    # Copilot excels at boilerplate
+  glue_code: 70      # Good with patterns, needs guidance
+  core_logic: 30     # Human designs, AI assists implementation
+
+# ═══════════════════════════════════════════════════════════════════════
+# GIT ANALYSIS SETTINGS
+# ═══════════════════════════════════════════════════════════════════════
+git:
+  session_gap_hours: 2       # Hours between commits to count as new session
+  session_buffer_minutes: 30 # Minutes to add to each session estimate
+  exclude_authors:           # Authors to exclude (bots, etc.)
+    - "semantic-release-bot"
+    - "dependabot[bot]"
+    - "github-actions[bot]"
+
+# ═══════════════════════════════════════════════════════════════════════
+# SPEC-KIT ANALYSIS
+# ═══════════════════════════════════════════════════════════════════════
+speckit:
+  enabled: true
+  task_pattern: "- \\[.\\] T[0-9]+"  # Regex to match task lines
+  specs_glob: "specs/**/tasks.md"    # Where to find task files
+
+# ═══════════════════════════════════════════════════════════════════════
+# OUTPUT SETTINGS
+# ═══════════════════════════════════════════════════════════════════════
+output:
+  report_file: "IMPACT_REPORT.md"
+  json_file: "impact-metrics.json"   # Machine-readable output
+  include_file_details: true         # List individual files in report

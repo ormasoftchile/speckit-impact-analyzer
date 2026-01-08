@@ -1,0 +1,589 @@
+#!/usr/bin/env bash
+# ═══════════════════════════════════════════════════════════════════════
+# Spec-Kit Impact Analyzer
+# Measure and showcase AI-assisted development impact
+# ═══════════════════════════════════════════════════════════════════════
+
+set -euo pipefail
+
+VERSION="1.0.0"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB_DIR="${SCRIPT_DIR}/../lib"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m' # No Color
+
+# ═══════════════════════════════════════════════════════════════════════
+# UTILITY FUNCTIONS
+# ═══════════════════════════════════════════════════════════════════════
+
+log_info() { echo -e "${BLUE}ℹ${NC} $1"; }
+log_success() { echo -e "${GREEN}✓${NC} $1"; }
+log_warn() { echo -e "${YELLOW}⚠${NC} $1"; }
+log_error() { echo -e "${RED}✗${NC} $1" >&2; }
+log_header() { echo -e "\n${BOLD}${CYAN}$1${NC}"; }
+
+usage() {
+    cat << EOF
+Usage: $(basename "$0") [OPTIONS] [PROJECT_PATH]
+
+Analyze AI-assisted development impact for a Spec-Kit project.
+
+Arguments:
+  PROJECT_PATH    Path to project (default: current directory)
+
+Options:
+  -c, --config FILE    Config file path (default: impact-config.yaml)
+  -o, --output FILE    Output report path (default: IMPACT_REPORT.md)
+  -j, --json           Also output JSON metrics
+  -q, --quiet          Suppress progress output
+  -v, --version        Show version
+  -h, --help           Show this help
+
+Examples:
+  $(basename "$0")                          # Analyze current directory
+  $(basename "$0") /path/to/project         # Analyze specific project
+  $(basename "$0") -c custom-config.yaml    # Use custom config
+  $(basename "$0") -j -o report.md          # Output JSON + custom report
+EOF
+}
+
+check_dependencies() {
+    local missing=()
+    
+    command -v cloc >/dev/null 2>&1 || missing+=("cloc")
+    command -v jq >/dev/null 2>&1 || missing+=("jq")
+    command -v git >/dev/null 2>&1 || missing+=("git")
+    command -v yq >/dev/null 2>&1 || missing+=("yq")
+    
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        log_error "Missing dependencies: ${missing[*]}"
+        echo "Install with: brew install ${missing[*]}"
+        exit 1
+    fi
+}
+
+# ═══════════════════════════════════════════════════════════════════════
+# CONFIGURATION
+# ═══════════════════════════════════════════════════════════════════════
+
+load_config() {
+    local config_file="$1"
+    
+    if [[ ! -f "$config_file" ]]; then
+        log_warn "Config file not found: $config_file"
+        log_info "Using default configuration"
+        
+        # Set defaults
+        PROJECT_NAME="$(basename "$PROJECT_PATH")"
+        PROJECT_TYPE="unknown"
+        SOURCE_DIR="src/"
+        TEST_DIR="test/"
+        SPECS_DIR="specs/"
+        EXCLUDE_DIRS="node_modules,out,dist,.vscode-test"
+        
+        MULT_BOILERPLATE=0.5
+        MULT_GLUE=1.5
+        MULT_LOGIC=4.0
+        
+        AI_BOILERPLATE=90
+        AI_GLUE=70
+        AI_LOGIC=30
+        
+        SESSION_GAP_HOURS=2
+        return
+    fi
+    
+    log_info "Loading config: $config_file"
+    
+    # Load values from YAML
+    PROJECT_NAME=$(yq '.project.name // "Unknown"' "$config_file")
+    PROJECT_TYPE=$(yq '.project.type // "unknown"' "$config_file")
+    SOURCE_DIR=$(yq '.paths.source // "src/"' "$config_file")
+    TEST_DIR=$(yq '.paths.tests // "test/"' "$config_file")
+    SPECS_DIR=$(yq '.paths.specs // "specs/"' "$config_file")
+    EXCLUDE_DIRS=$(yq '.paths.exclude | join(",") // "node_modules,out,dist"' "$config_file")
+    
+    MULT_BOILERPLATE=$(yq '.multipliers.boilerplate // 0.5' "$config_file")
+    MULT_GLUE=$(yq '.multipliers.glue_code // 1.5' "$config_file")
+    MULT_LOGIC=$(yq '.multipliers.core_logic // 4.0' "$config_file")
+    
+    AI_BOILERPLATE=$(yq '.ai_percent.boilerplate // 90' "$config_file")
+    AI_GLUE=$(yq '.ai_percent.glue_code // 70' "$config_file")
+    AI_LOGIC=$(yq '.ai_percent.core_logic // 30' "$config_file")
+    
+    SESSION_GAP_HOURS=$(yq '.git.session_gap_hours // 2' "$config_file")
+}
+
+# ═══════════════════════════════════════════════════════════════════════
+# METRICS COLLECTION
+# ═══════════════════════════════════════════════════════════════════════
+
+collect_code_metrics() {
+    log_header "📊 Collecting Code Metrics"
+    
+    local source_path="${PROJECT_PATH}/${SOURCE_DIR}"
+    
+    if [[ ! -d "$source_path" ]]; then
+        log_warn "Source directory not found: $source_path"
+        TOTAL_LOC=0
+        TOTAL_FILES=0
+        return
+    fi
+    
+    # Get cloc output as JSON
+    CLOC_OUTPUT=$(cloc "$source_path" --exclude-dir="$EXCLUDE_DIRS" --json 2>/dev/null || echo '{}')
+    
+    # Extract totals
+    TOTAL_LOC=$(echo "$CLOC_OUTPUT" | jq '.SUM.code // 0')
+    TOTAL_FILES=$(echo "$CLOC_OUTPUT" | jq '.SUM.nFiles // 0')
+    TOTAL_COMMENTS=$(echo "$CLOC_OUTPUT" | jq '.SUM.comment // 0')
+    TOTAL_BLANK=$(echo "$CLOC_OUTPUT" | jq '.SUM.blank // 0')
+    
+    # Get per-file breakdown
+    CLOC_BY_FILE=$(cloc "$source_path" --exclude-dir="$EXCLUDE_DIRS" --by-file --json 2>/dev/null || echo '{}')
+    
+    log_success "Found $TOTAL_FILES files with $TOTAL_LOC lines of code"
+}
+
+classify_files() {
+    log_header "🏷️  Classifying Files"
+    
+    # Initialize counters
+    LOC_BOILERPLATE=0
+    LOC_GLUE=0
+    LOC_LOGIC=0
+    FILES_BOILERPLATE=0
+    FILES_GLUE=0
+    FILES_LOGIC=0
+    
+    local source_path="${PROJECT_PATH}/${SOURCE_DIR}"
+    
+    if [[ ! -d "$source_path" ]]; then
+        return
+    fi
+    
+    # Read classification patterns from config
+    local config_file="${PROJECT_PATH}/${CONFIG_FILE}"
+    
+    # Get file list with LoC from cloc
+    local files_json
+    files_json=$(echo "$CLOC_BY_FILE" | jq 'to_entries | map(select(.key | startswith("src/") or startswith("./src/"))) | from_entries')
+    
+    # Simple classification based on path patterns
+    while IFS= read -r file; do
+        local loc
+        loc=$(echo "$CLOC_BY_FILE" | jq --arg f "$file" '.[$f].code // 0')
+        
+        # Classify based on path
+        if [[ "$file" =~ (extension\.ts|types/|config/|\.d\.ts) ]]; then
+            LOC_BOILERPLATE=$((LOC_BOILERPLATE + loc))
+            FILES_BOILERPLATE=$((FILES_BOILERPLATE + 1))
+        elif [[ "$file" =~ (commands/|utils/|webview/|handlers/) ]]; then
+            LOC_GLUE=$((LOC_GLUE + loc))
+            FILES_GLUE=$((FILES_GLUE + 1))
+        else
+            # Default to core logic
+            LOC_LOGIC=$((LOC_LOGIC + loc))
+            FILES_LOGIC=$((FILES_LOGIC + 1))
+        fi
+    done < <(echo "$CLOC_BY_FILE" | jq -r 'keys[]' | grep -E '\.(ts|js|py|go|rs)$' || true)
+    
+    log_success "Classified: Boilerplate=$FILES_BOILERPLATE, Glue=$FILES_GLUE, Logic=$FILES_LOGIC files"
+}
+
+analyze_git_timeline() {
+    log_header "⏱️  Analyzing Git Timeline"
+    
+    cd "$PROJECT_PATH"
+    
+    if [[ ! -d .git ]]; then
+        log_warn "Not a git repository"
+        GIT_FIRST_COMMIT=""
+        GIT_LAST_COMMIT=""
+        GIT_TOTAL_COMMITS=0
+        GIT_ESTIMATED_HOURS=0
+        return
+    fi
+    
+    # Get commit timestamps
+    GIT_FIRST_COMMIT=$(git log --format="%ai" --reverse | head -1 || echo "")
+    GIT_LAST_COMMIT=$(git log --format="%ai" -1 || echo "")
+    GIT_TOTAL_COMMITS=$(git rev-list --count HEAD 2>/dev/null || echo "0")
+    
+    # Estimate development hours based on commit sessions
+    # A session is a group of commits within SESSION_GAP_HOURS of each other
+    local prev_timestamp=0
+    local session_count=0
+    local total_session_time=0
+    local session_start=0
+    local gap_seconds=$((SESSION_GAP_HOURS * 3600))
+    
+    while IFS= read -r timestamp; do
+        local current
+        current=$(date -j -f "%Y-%m-%d %H:%M:%S %z" "$timestamp" "+%s" 2>/dev/null || date -d "$timestamp" "+%s" 2>/dev/null || echo "0")
+        
+        if [[ $prev_timestamp -eq 0 ]]; then
+            session_start=$current
+            session_count=1
+        elif [[ $((current - prev_timestamp)) -gt $gap_seconds ]]; then
+            # New session - add previous session time
+            total_session_time=$((total_session_time + prev_timestamp - session_start + 1800)) # +30min buffer
+            session_start=$current
+            session_count=$((session_count + 1))
+        fi
+        prev_timestamp=$current
+    done < <(git log --format="%ai" --reverse)
+    
+    # Add final session
+    if [[ $prev_timestamp -gt 0 ]] && [[ $session_start -gt 0 ]]; then
+        total_session_time=$((total_session_time + prev_timestamp - session_start + 1800))
+    fi
+    
+    GIT_ESTIMATED_HOURS=$(echo "scale=1; $total_session_time / 3600" | bc)
+    GIT_SESSION_COUNT=$session_count
+    
+    log_success "Found $GIT_TOTAL_COMMITS commits in ~$GIT_SESSION_COUNT sessions (~${GIT_ESTIMATED_HOURS}h estimated)"
+}
+
+analyze_speckit() {
+    log_header "📋 Analyzing Spec-Kit Usage"
+    
+    local specs_path="${PROJECT_PATH}/${SPECS_DIR}"
+    
+    if [[ ! -d "$specs_path" ]]; then
+        log_warn "Specs directory not found: $specs_path"
+        SPEC_LINES=0
+        SPEC_TASKS_TOTAL=0
+        SPEC_TASKS_COMPLETE=0
+        return
+    fi
+    
+    # Count spec lines
+    SPEC_LINES=$(find "$specs_path" -name "*.md" -exec cat {} \; 2>/dev/null | wc -l | tr -d ' ')
+    
+    # Count tasks
+    SPEC_TASKS_TOTAL=$(grep -rE '^\s*-\s*\[.\]\s*T[0-9]+' "$specs_path" 2>/dev/null | wc -l | tr -d ' ')
+    SPEC_TASKS_COMPLETE=$(grep -rE '^\s*-\s*\[x\]\s*T[0-9]+' "$specs_path" 2>/dev/null | wc -l | tr -d ' ')
+    
+    # Count spec files
+    SPEC_FILES=$(find "$specs_path" -name "*.md" | wc -l | tr -d ' ')
+    
+    log_success "Found $SPEC_LINES lines in $SPEC_FILES spec files, $SPEC_TASKS_COMPLETE/$SPEC_TASKS_TOTAL tasks complete"
+}
+
+# ═══════════════════════════════════════════════════════════════════════
+# CALCULATIONS
+# ═══════════════════════════════════════════════════════════════════════
+
+calculate_impact() {
+    log_header "🧮 Calculating Impact"
+    
+    # AI-assisted lines
+    AI_LOC_BOILERPLATE=$(echo "scale=0; $LOC_BOILERPLATE * $AI_BOILERPLATE / 100" | bc)
+    AI_LOC_GLUE=$(echo "scale=0; $LOC_GLUE * $AI_GLUE / 100" | bc)
+    AI_LOC_LOGIC=$(echo "scale=0; $LOC_LOGIC * $AI_LOGIC / 100" | bc)
+    AI_LOC_TOTAL=$((AI_LOC_BOILERPLATE + AI_LOC_GLUE + AI_LOC_LOGIC))
+    
+    # Estimated manual time (hours)
+    EST_TIME_BOILERPLATE=$(echo "scale=1; $LOC_BOILERPLATE * $MULT_BOILERPLATE / 100" | bc)
+    EST_TIME_GLUE=$(echo "scale=1; $LOC_GLUE * $MULT_GLUE / 100" | bc)
+    EST_TIME_LOGIC=$(echo "scale=1; $LOC_LOGIC * $MULT_LOGIC / 100" | bc)
+    EST_TIME_TOTAL=$(echo "scale=1; $EST_TIME_BOILERPLATE + $EST_TIME_GLUE + $EST_TIME_LOGIC" | bc)
+    
+    # Time saved (proportional to AI assistance)
+    SAVED_BOILERPLATE=$(echo "scale=1; $EST_TIME_BOILERPLATE * $AI_BOILERPLATE / 100" | bc)
+    SAVED_GLUE=$(echo "scale=1; $EST_TIME_GLUE * $AI_GLUE / 100" | bc)
+    SAVED_LOGIC=$(echo "scale=1; $EST_TIME_LOGIC * $AI_LOGIC / 100" | bc)
+    SAVED_TOTAL=$(echo "scale=1; $SAVED_BOILERPLATE + $SAVED_GLUE + $SAVED_LOGIC" | bc)
+    
+    # Percentages
+    if [[ $TOTAL_LOC -gt 0 ]]; then
+        AI_PERCENT_TOTAL=$(echo "scale=0; $AI_LOC_TOTAL * 100 / $TOTAL_LOC" | bc)
+    else
+        AI_PERCENT_TOTAL=0
+    fi
+    
+    if [[ $(echo "$EST_TIME_TOTAL > 0" | bc) -eq 1 ]]; then
+        SAVED_PERCENT=$(echo "scale=0; $SAVED_TOTAL * 100 / $EST_TIME_TOTAL" | bc)
+    else
+        SAVED_PERCENT=0
+    fi
+    
+    log_success "Analysis complete: ${AI_PERCENT_TOTAL}% AI-assisted, ${SAVED_PERCENT}% time saved"
+}
+
+# ═══════════════════════════════════════════════════════════════════════
+# REPORT GENERATION
+# ═══════════════════════════════════════════════════════════════════════
+
+generate_report() {
+    log_header "📝 Generating Report"
+    
+    local report_file="${PROJECT_PATH}/${OUTPUT_FILE}"
+    local date_generated=$(date "+%Y-%m-%d")
+    
+    cat > "$report_file" << EOF
+# 📊 AI-Assisted Development Impact Report
+
+**Project**: ${PROJECT_NAME}  
+**Type**: ${PROJECT_TYPE}  
+**Generated**: ${date_generated}  
+**Analyzer Version**: ${VERSION}
+
+---
+
+## Executive Summary
+
+| Metric | Value |
+|--------|-------|
+| **Total Source LoC** | ${TOTAL_LOC} |
+| **AI-Assisted LoC** | ${AI_LOC_TOTAL} (${AI_PERCENT_TOTAL}%) |
+| **Estimated Manual Time** | ${EST_TIME_TOTAL}h |
+| **Estimated Time Saved** | ${SAVED_TOTAL}h (${SAVED_PERCENT}%) |
+| **Actual Dev Time** | ~${GIT_ESTIMATED_HOURS}h (${GIT_SESSION_COUNT} sessions) |
+
+---
+
+## 📈 Code Metrics Breakdown
+
+| Category | Files | LoC | AI-Assisted | Est. Manual | Time Saved |
+|----------|-------|-----|-------------|-------------|------------|
+| **Boilerplate** | ${FILES_BOILERPLATE} | ${LOC_BOILERPLATE} | ${AI_LOC_BOILERPLATE} (${AI_BOILERPLATE}%) | ${EST_TIME_BOILERPLATE}h | ${SAVED_BOILERPLATE}h |
+| **Glue Code** | ${FILES_GLUE} | ${LOC_GLUE} | ${AI_LOC_GLUE} (${AI_GLUE}%) | ${EST_TIME_GLUE}h | ${SAVED_GLUE}h |
+| **Core Logic** | ${FILES_LOGIC} | ${LOC_LOGIC} | ${AI_LOC_LOGIC} (${AI_LOGIC}%) | ${EST_TIME_LOGIC}h | ${SAVED_LOGIC}h |
+| **TOTAL** | ${TOTAL_FILES} | ${TOTAL_LOC} | ${AI_LOC_TOTAL} (${AI_PERCENT_TOTAL}%) | ${EST_TIME_TOTAL}h | ${SAVED_TOTAL}h |
+
+### Category Definitions
+
+- **Boilerplate**: Extension entry points, type definitions, configuration schemas
+- **Glue Code**: Command handlers, event listeners, utility functions, UI bindings
+- **Core Logic**: Unique algorithms, business rules, core functionality
+
+---
+
+## ⏱️ Development Timeline
+
+| Metric | Value |
+|--------|-------|
+| **First Commit** | ${GIT_FIRST_COMMIT:-N/A} |
+| **Last Commit** | ${GIT_LAST_COMMIT:-N/A} |
+| **Total Commits** | ${GIT_TOTAL_COMMITS} |
+| **Dev Sessions** | ${GIT_SESSION_COUNT:-N/A} |
+| **Estimated Active Hours** | ${GIT_ESTIMATED_HOURS:-N/A}h |
+
+---
+
+## 📋 Spec-Kit Leverage
+
+| Metric | Value |
+|--------|-------|
+| **Specification Lines** | ${SPEC_LINES} |
+| **Specification Files** | ${SPEC_FILES:-0} |
+| **Tasks Defined** | ${SPEC_TASKS_TOTAL} |
+| **Tasks Completed** | ${SPEC_TASKS_COMPLETE} ($([ "$SPEC_TASKS_TOTAL" -gt 0 ] && echo "scale=0; $SPEC_TASKS_COMPLETE * 100 / $SPEC_TASKS_TOTAL" | bc || echo "0")%) |
+| **Spec-to-Code Ratio** | $(echo "scale=1; $SPEC_LINES / ($TOTAL_LOC + 1)" | bc):1 |
+
+---
+
+## 🎯 Key Insights
+
+### Productivity Multiplier
+\`\`\`
+Traditional Development:  ${EST_TIME_TOTAL}h estimated
+AI-Assisted Development:  ${GIT_ESTIMATED_HOURS:-"N/A"}h actual
+Productivity Gain:        ~$(echo "scale=1; $EST_TIME_TOTAL / ($GIT_ESTIMATED_HOURS + 0.1)" | bc 2>/dev/null || echo "N/A")x faster
+\`\`\`
+
+### Value of Spec-Kit Methodology
+- **Structured Planning**: ${SPEC_TASKS_TOTAL} discrete tasks defined upfront
+- **Clear Specifications**: ${SPEC_LINES} lines of requirements/design docs
+- **Execution Tracking**: ${SPEC_TASKS_COMPLETE}/${SPEC_TASKS_TOTAL} tasks completed
+
+---
+
+## 📊 Methodology
+
+This report uses a conservative estimation model:
+
+1. **Code Classification**: Files categorized by complexity/AI-assist potential
+2. **Time Multipliers**: Industry-average hours per 100 LoC without AI
+3. **AI Assistance %**: Conservative estimates of Copilot contribution
+4. **Session Detection**: Git commits grouped by 2-hour gaps
+
+### Assumptions & Limitations
+
+- Time multipliers are estimates based on typical TypeScript/VS Code development
+- AI assistance percentages are self-reported estimates
+- Actual productivity varies by developer experience and problem domain
+- Git session detection may under/over-estimate active coding time
+
+---
+
+*Generated by [Spec-Kit Impact Analyzer](https://github.com/YOUR_USER/speckit-impact-analyzer) v${VERSION}*
+EOF
+
+    log_success "Report saved: $report_file"
+}
+
+generate_json() {
+    if [[ "$OUTPUT_JSON" != "true" ]]; then
+        return
+    fi
+    
+    local json_file="${PROJECT_PATH}/impact-metrics.json"
+    
+    cat > "$json_file" << EOF
+{
+  "version": "${VERSION}",
+  "generated": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+  "project": {
+    "name": "${PROJECT_NAME}",
+    "type": "${PROJECT_TYPE}"
+  },
+  "code": {
+    "total_loc": ${TOTAL_LOC},
+    "total_files": ${TOTAL_FILES},
+    "comments": ${TOTAL_COMMENTS:-0},
+    "blank": ${TOTAL_BLANK:-0}
+  },
+  "classification": {
+    "boilerplate": { "files": ${FILES_BOILERPLATE}, "loc": ${LOC_BOILERPLATE} },
+    "glue_code": { "files": ${FILES_GLUE}, "loc": ${LOC_GLUE} },
+    "core_logic": { "files": ${FILES_LOGIC}, "loc": ${LOC_LOGIC} }
+  },
+  "ai_assisted": {
+    "total_loc": ${AI_LOC_TOTAL},
+    "percent": ${AI_PERCENT_TOTAL},
+    "by_category": {
+      "boilerplate": ${AI_LOC_BOILERPLATE},
+      "glue_code": ${AI_LOC_GLUE},
+      "core_logic": ${AI_LOC_LOGIC}
+    }
+  },
+  "time": {
+    "estimated_manual_hours": ${EST_TIME_TOTAL},
+    "estimated_saved_hours": ${SAVED_TOTAL},
+    "saved_percent": ${SAVED_PERCENT},
+    "actual_hours": ${GIT_ESTIMATED_HOURS:-0}
+  },
+  "git": {
+    "first_commit": "${GIT_FIRST_COMMIT:-}",
+    "last_commit": "${GIT_LAST_COMMIT:-}",
+    "total_commits": ${GIT_TOTAL_COMMITS},
+    "sessions": ${GIT_SESSION_COUNT:-0}
+  },
+  "speckit": {
+    "spec_lines": ${SPEC_LINES:-0},
+    "tasks_total": ${SPEC_TASKS_TOTAL:-0},
+    "tasks_complete": ${SPEC_TASKS_COMPLETE:-0}
+  }
+}
+EOF
+
+    log_success "JSON metrics saved: $json_file"
+}
+
+# ═══════════════════════════════════════════════════════════════════════
+# MAIN
+# ═══════════════════════════════════════════════════════════════════════
+
+main() {
+    # Defaults
+    PROJECT_PATH="$(pwd)"
+    CONFIG_FILE="impact-config.yaml"
+    OUTPUT_FILE="IMPACT_REPORT.md"
+    OUTPUT_JSON="false"
+    QUIET="false"
+    
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -c|--config)
+                CONFIG_FILE="$2"
+                shift 2
+                ;;
+            -o|--output)
+                OUTPUT_FILE="$2"
+                shift 2
+                ;;
+            -j|--json)
+                OUTPUT_JSON="true"
+                shift
+                ;;
+            -q|--quiet)
+                QUIET="true"
+                shift
+                ;;
+            -v|--version)
+                echo "Spec-Kit Impact Analyzer v${VERSION}"
+                exit 0
+                ;;
+            -h|--help)
+                usage
+                exit 0
+                ;;
+            -*)
+                log_error "Unknown option: $1"
+                usage
+                exit 1
+                ;;
+            *)
+                PROJECT_PATH="$1"
+                shift
+                ;;
+        esac
+    done
+    
+    # Resolve to absolute path
+    PROJECT_PATH="$(cd "$PROJECT_PATH" && pwd)"
+    
+    echo ""
+    echo -e "${BOLD}═══════════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${BOLD}${CYAN}  📊 Spec-Kit Impact Analyzer v${VERSION}${NC}"
+    echo -e "${BOLD}═══════════════════════════════════════════════════════════════════════${NC}"
+    echo -e "  Project: ${PROJECT_PATH}"
+    echo ""
+    
+    # Check dependencies
+    check_dependencies
+    
+    # Load configuration
+    load_config "${PROJECT_PATH}/${CONFIG_FILE}"
+    
+    # Collect metrics
+    collect_code_metrics
+    classify_files
+    analyze_git_timeline
+    analyze_speckit
+    
+    # Calculate impact
+    calculate_impact
+    
+    # Generate outputs
+    generate_report
+    generate_json
+    
+    echo ""
+    echo -e "${BOLD}═══════════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${GREEN}${BOLD}  ✓ Analysis Complete${NC}"
+    echo -e "${BOLD}═══════════════════════════════════════════════════════════════════════${NC}"
+    echo ""
+    echo -e "  ${BOLD}Results:${NC}"
+    echo -e "    • ${TOTAL_LOC} lines of code (${AI_PERCENT_TOTAL}% AI-assisted)"
+    echo -e "    • ${EST_TIME_TOTAL}h estimated manual time"
+    echo -e "    • ${SAVED_TOTAL}h saved (${SAVED_PERCENT}%)"
+    echo ""
+    echo -e "  ${BOLD}Output:${NC}"
+    echo -e "    • ${OUTPUT_FILE}"
+    [[ "$OUTPUT_JSON" == "true" ]] && echo -e "    • impact-metrics.json"
+    echo ""
+}
+
+main "$@"

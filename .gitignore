@@ -1,0 +1,32 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Node
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Output
+out/
+dist/
+*.vsix
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Test output
+coverage/
+.nyc_output/
+
+# Temp files
+*.tmp
+*.temp
