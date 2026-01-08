@@ -97,6 +97,7 @@ load_config() {
         AI_LOGIC=30
         
         SESSION_GAP_HOURS=2
+        SPECKIT_ENABLED=true
         return
     fi
     
@@ -119,6 +120,15 @@ load_config() {
     AI_LOGIC=$(yq '.ai_percent.core_logic // 30' "$config_file")
     
     SESSION_GAP_HOURS=$(yq '.git.session_gap_hours // 2' "$config_file")
+    
+    # Handle boolean properly - yq's // operator doesn't work with false
+    local speckit_val
+    speckit_val=$(yq '.speckit.enabled' "$config_file")
+    if [[ "$speckit_val" == "null" ]] || [[ -z "$speckit_val" ]]; then
+        SPECKIT_ENABLED="true"
+    else
+        SPECKIT_ENABLED="$speckit_val"
+    fi
 }
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -255,6 +265,16 @@ analyze_git_timeline() {
 analyze_speckit() {
     log_header "📋 Analyzing Spec-Kit Usage"
     
+    # Check if speckit analysis is enabled
+    if [[ "$SPECKIT_ENABLED" == "false" ]]; then
+        log_info "Spec-Kit analysis disabled in config"
+        SPEC_LINES=0
+        SPEC_TASKS_TOTAL=0
+        SPEC_TASKS_COMPLETE=0
+        SPEC_FILES=0
+        return
+    fi
+    
     local specs_path="${PROJECT_PATH}/${SPECS_DIR}"
     
     if [[ ! -d "$specs_path" ]]; then
@@ -262,6 +282,7 @@ analyze_speckit() {
         SPEC_LINES=0
         SPEC_TASKS_TOTAL=0
         SPEC_TASKS_COMPLETE=0
+        SPEC_FILES=0
         return
     fi
     
