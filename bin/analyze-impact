@@ -192,10 +192,10 @@ classify_files() {
         loc=$(echo "$CLOC_BY_FILE" | jq --arg f "$file" '.[$f].code // 0')
         
         # Classify based on path
-        if [[ "$file" =~ (extension\.ts|types/|config/|\.d\.ts) ]]; then
+        if [[ "$file" =~ (extension\.ts|types/|config/|\.d\.ts|config\.ts|layouts/) ]]; then
             LOC_BOILERPLATE=$((LOC_BOILERPLATE + loc))
             FILES_BOILERPLATE=$((FILES_BOILERPLATE + 1))
-        elif [[ "$file" =~ (commands/|utils/|webview/|handlers/) ]]; then
+        elif [[ "$file" =~ (commands/|utils/|webview/|handlers/|components/|pages/) ]]; then
             LOC_GLUE=$((LOC_GLUE + loc))
             FILES_GLUE=$((FILES_GLUE + 1))
         else
@@ -203,7 +203,7 @@ classify_files() {
             LOC_LOGIC=$((LOC_LOGIC + loc))
             FILES_LOGIC=$((FILES_LOGIC + 1))
         fi
-    done < <(echo "$CLOC_BY_FILE" | jq -r 'keys[]' | grep -E '\.(ts|js|py|go|rs)$' || true)
+    done < <(echo "$CLOC_BY_FILE" | jq -r 'keys[]' | grep -E '\.(ts|js|py|go|rs|astro|tsx|jsx|vue|svelte|md)$' || true)
     
     log_success "Classified: Boilerplate=$FILES_BOILERPLATE, Glue=$FILES_GLUE, Logic=$FILES_LOGIC files"
 }
@@ -289,9 +289,9 @@ analyze_speckit() {
     # Count spec lines
     SPEC_LINES=$(find "$specs_path" -name "*.md" -exec cat {} \; 2>/dev/null | wc -l | tr -d ' ')
     
-    # Count tasks
-    SPEC_TASKS_TOTAL=$(grep -rE '^\s*-\s*\[.\]\s*T[0-9]+' "$specs_path" 2>/dev/null | wc -l | tr -d ' ')
-    SPEC_TASKS_COMPLETE=$(grep -rE '^\s*-\s*\[x\]\s*T[0-9]+' "$specs_path" 2>/dev/null | wc -l | tr -d ' ')
+    # Count tasks - handle both formats: "T001" and "**T001**"
+    SPEC_TASKS_TOTAL=$(grep -rE '^\s*-\s*\[.\]\s*(\*\*)?T[0-9]+' "$specs_path" 2>/dev/null | wc -l | tr -d ' ')
+    SPEC_TASKS_COMPLETE=$(grep -rE '^\s*-\s*\[x\]\s*(\*\*)?T[0-9]+' "$specs_path" 2>/dev/null | wc -l | tr -d ' ')
     
     # Count spec files
     SPEC_FILES=$(find "$specs_path" -name "*.md" | wc -l | tr -d ' ')

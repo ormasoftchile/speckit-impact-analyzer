@@ -1,7 +1,7 @@
-# 📊 Ormasoft VS Code Extensions Portfolio
+# 📊 AI-Assisted Development Portfolio
 
 **Generated**: 2026-01-08  
-**Projects Analyzed**: 3  
+**Projects Analyzed**: 4  
 **Analyzer Version**: 1.0.0
 
 ---
@@ -12,15 +12,15 @@
 ╔════════════════════════════════════════════════════════════════════════╗
 ║                    AI-ASSISTED DEVELOPMENT IMPACT                       ║
 ╠════════════════════════════════════════════════════════════════════════╣
-║  Total Projects:              3                                         ║
-║  Total Lines of Code:         35617                                   ║
-║  AI-Assisted Code:            12351 (34%)                              ║
+║  Total Projects:              4                                         ║
+║  Total Lines of Code:         36807                                   ║
+║  AI-Assisted Code:            13192 (35%)                              ║
 ║  ──────────────────────────────────────────────────────────────────── ║
-║  Estimated Manual Time:       555.0h                                    ║
-║  Actual Development Time:     34.6h                                     ║
-║  Time Saved:                  264.4h (47%)                           ║
+║  Estimated Manual Time:       585.6h                                    ║
+║  Actual Development Time:     55.6h                                     ║
+║  Time Saved:                  286.0h (48%)                           ║
 ║  ──────────────────────────────────────────────────────────────────── ║
-║  Average Productivity Gain:   16.0x                                     ║
+║  Average Productivity Gain:   10.5x                                     ║
 ╚════════════════════════════════════════════════════════════════════════╝
 ```
 
@@ -30,10 +30,11 @@
 
 | Project | LoC | AI-Assisted | Est. Manual | Actual | Time Saved | Productivity |
 |---------|-----|-------------|-------------|--------|------------|--------------|
-| **DOCX to Markdown Converter** | 1383 | 55% | 33.2h | 9.3h | 14.4h (43%) | 3.5x |
+| **DOCX to Markdown Converter** | 1383 | 55% | 33.2h | 9.8h | 14.4h (43%) | 3.3x |
 | **EVTX Viewer** | 27512 | 30% | 302.3h | 13.3h | 155.5h (51%) | 22.7x |
 | **Focus Space** | 6722 | 49% | 219.5h | 12.0h | 94.5h (43%) | 18.2x |
-| **TOTAL** | **35617** | **34%** | **555.0h** | **34.6h** | **264.4h (47%)** | **16.0x** |
+| **Ormasoft Portfolio Website** | 1190 | 70% | 30.6h | 20.5h | 21.6h (70%) | 1.4x |
+| **TOTAL** | **36807** | **35%** | **585.6h** | **55.6h** | **286.0h (48%)** | **10.5x** |
 
 ---
 
@@ -41,19 +42,19 @@
 
 | Metric | Value |
 |--------|-------|
-| **Total Specification Lines** | 7215 |
-| **Total Tasks Defined** | 199 |
-| **Tasks Completed** | 108 (54%) |
-| **Total Commits** | 143 |
-| **Spec-to-Code Ratio** | .20:1 |
+| **Total Specification Lines** | 9326 |
+| **Total Tasks Defined** | 241 |
+| **Tasks Completed** | 137 (56%) |
+| **Total Commits** | 223 |
+| **Spec-to-Code Ratio** | .25:1 |
 
 ---
 
 ## 🔍 Key Insights
 
 ### Time Efficiency
-- **264.4h saved** across 3 projects
-- Average productivity gain of **16.0x** compared to traditional development
+- **286.0h saved** across 4 projects
+- Average productivity gain of **10.5x** compared to traditional development
 - AI assistance particularly effective for boilerplate and glue code (70-90% AI-assisted)
 
 ### Methodology Benefits
