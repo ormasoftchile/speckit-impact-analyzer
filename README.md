@@ -21,7 +21,7 @@ Analyzes any Spec-Kit project to produce:
 ### Option 1: Clone as submodule (recommended)
 ```bash
 cd your-project
-git submodule add https://github.com/YOUR_USER/speckit-impact-analyzer .impact-analyzer
+git submodule add https://github.com/ormasoftchile/speckit-impact-analyzer .impact-analyzer
 ```
 
 ### Option 2: Copy scripts directly
