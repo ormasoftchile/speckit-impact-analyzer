@@ -1,79 +1,143 @@
 # 📊 Spec-Kit Impact Analyzer
 
-**Measure and showcase AI-assisted development impact using Spec-Kit + GitHub Copilot**
+Measure the productivity impact of AI-assisted development using the Spec-Kit methodology.
 
-A scriptable toolkit to generate quantitative evidence of productivity gains from AI-assisted development workflows.
+## Features
 
----
+- **Auto-detect project type** (VS Code extension, Astro, Next.js, React, Python, Rust, etc.)
+- **Analyze git history** to estimate actual development time
+- **Classify code** into Boilerplate / Glue / Core Logic
+- **Calculate AI-assisted code percentage** and time savings
+- **Generate portfolio dashboards** for multiple projects
+- **Cross-platform** - works on macOS, Linux, and Windows (via WSL/Git Bash)
 
-## 🎯 What This Does
+## Installation
 
-Analyzes any Spec-Kit project to produce:
+### Option 1: npm (Recommended)
 
-- **Time savings estimates** based on code classification
-- **AI-assistance percentages** per code category
-- **Development velocity metrics** from git history
-- **Spec-Kit leverage metrics** (specs → code ratio)
-- **Executive dashboard** for portfolio showcasing
-
-## 📦 Installation
-
-### Option 1: Clone as submodule (recommended)
 ```bash
-cd your-project
-git submodule add https://github.com/ormasoftchile/speckit-impact-analyzer .impact-analyzer
+# Install globally
+npm install -g speckit-impact-analyzer
+
+# Or use npx without installing
+npx speckit-impact-analyzer <project-path>
 ```
 
-### Option 2: Copy scripts directly
+### Option 2: Clone from GitHub
+
 ```bash
-cp -r speckit-impact-analyzer/bin your-project/scripts/impact
-cp speckit-impact-analyzer/templates/impact-config.example.yaml your-project/impact-config.yaml
+# Clone the repo
+git clone https://github.com/ormasoftchile/speckit-impact-analyzer.git
+cd speckit-impact-analyzer
+
+# Install dependencies
+npm install
+
+# Link for global use
+npm link
 ```
 
-### Option 3: Run from anywhere
+### Requirements
+
+- **Node.js 16+**
+- **cloc** - `brew install cloc` (macOS) / `apt install cloc` (Linux) / `choco install cloc` (Windows)
+- **jq** - `brew install jq` (macOS) / `apt install jq` (Linux) / `choco install jq` (Windows)  
+- **yq** - `brew install yq` (macOS) / `pip install yq` / [Download](https://github.com/mikefarah/yq/releases)
+- **Windows**: Requires WSL or Git Bash
+
+## Quick Start
+
 ```bash
-# Add to PATH
-export PATH="$PATH:/path/to/speckit-impact-analyzer/bin"
+# 1. Initialize config for your project (auto-detects project type)
+speckit-init /path/to/project
 
-# Run against any project
-analyze-impact /path/to/your-project
-```
+# 2. Review and adjust the generated impact-config.yaml
+code /path/to/project/impact-config.yaml
 
-## 🚀 Quick Start
+# 3. Run the analysis
+speckit-analyze /path/to/project
 
-```bash
-# 1. Create config for your project
-cp templates/impact-config.example.yaml /path/to/project/impact-config.yaml
-
-# 2. Edit config to match your project structure
-vim /path/to/project/impact-config.yaml
-
-# 3. Run analysis
-./bin/analyze-impact /path/to/project
-
-# 4. View report
+# 4. View the report
 cat /path/to/project/IMPACT_REPORT.md
 ```
 
-## 📋 Configuration
+## Commands
 
-Create `impact-config.yaml` in your project root:
+### `speckit-init` - Generate Config
+
+Auto-generates `impact-config.yaml` based on project structure:
+
+```bash
+speckit-init /path/to/project           # Auto-detect project type
+speckit-init . -t vscode-extension      # Force project type
+speckit-init . -n "My Cool Project"     # Override name
+speckit-init . -f                       # Overwrite existing
+```
+
+**Supported project types:**
+- `vscode-extension` - VS Code extensions
+- `astro` - Astro websites
+- `nextjs` - Next.js apps
+- `react` - React apps
+- `vue` - Vue.js apps
+- `python` - Python projects
+- `rust` - Rust projects
+- `go` - Go projects
+- `node` - Generic Node.js
+- `generic` - Fallback
+
+### `speckit-analyze` - Run Analysis
+
+```bash
+speckit-analyze /path/to/project        # Basic analysis
+speckit-analyze /path/to/project -j     # Also output JSON metrics
+speckit-analyze /path/to/project -v     # Verbose output
+```
+
+**Output files:**
+- `IMPACT_REPORT.md` - Human-readable report
+- `impact-metrics.json` - Machine-readable metrics (with `-j`)
+
+### `speckit-portfolio` - Aggregate Projects
+
+Combine multiple projects into a portfolio dashboard:
+
+```bash
+speckit-portfolio \
+  project1/impact-metrics.json \
+  project2/impact-metrics.json \
+  project3/impact-metrics.json \
+  -o PORTFOLIO_DASHBOARD.md
+```
+
+## Configuration
+
+The `impact-config.yaml` file controls how the analyzer works:
 
 ```yaml
 project:
-  name: "My VS Code Extension"
+  name: "My Project"
   type: "vscode-extension"
 
-# File classification (glob patterns → category)
+paths:
+  source: "src/"
+  tests: "test/"
+  specs: "specs/"
+  exclude:
+    - "node_modules"
+    - "dist"
+
+# File classification (adjust for your project structure)
 classification:
   boilerplate:
-    - "src/extension.ts"
-    - "src/types/**"
+    - "extension.ts"
+    - "types/**/*"
   glue_code:
-    - "src/commands/**"
-    - "src/utils/**"
+    - "commands/**/*"
+    - "utils/**/*"
   core_logic:
-    - "src/core/**"
+    - "conversion/**/*"
+    - "parsers/**/*"
 
 # Time multipliers (hours per 100 LoC without AI)
 multipliers:
@@ -81,115 +145,62 @@ multipliers:
   glue_code: 1.5
   core_logic: 4.0
 
-# AI assistance estimates
+# AI assistance percentage by code type
 ai_percent:
-  boilerplate: 90
-  glue_code: 70
-  core_logic: 30
+  boilerplate: 90   # Config/types are easy for AI
+  glue_code: 70     # Standard patterns
+  core_logic: 35    # Unique logic needs human design
+
+# Git settings
+git:
+  session_gap_hours: 2
+  exclude_authors:
+    - "dependabot[bot]"
+
+# Spec-Kit settings
+speckit:
+  enabled: true
+  task_pattern: "(\\*\\*)?T[0-9]+"
 ```
 
-## 📈 Output Example
+## How It Works
 
-```
-═══════════════════════════════════════════════════════════════════════
-📊 AI-ASSISTED DEVELOPMENT IMPACT REPORT
-Project: DOCX to Markdown Converter
-Generated: 2025-12-16
-═══════════════════════════════════════════════════════════════════════
+### Time Estimation Model
 
-📈 CODE METRICS
-────────────────────────────────────────────────────────────────────────
-Category        │ Files │ LoC   │ AI-Assisted │ Est. Manual │ Saved
-────────────────────────────────────────────────────────────────────────
-Boilerplate     │   3   │  119  │   107 (90%) │    0.6h     │  0.5h
-Glue Code       │   7   │  564  │   395 (70%) │    8.5h     │  5.9h
-Core Logic      │   4   │  700  │   210 (30%) │   28.0h     │  8.4h
-────────────────────────────────────────────────────────────────────────
-TOTAL           │  14   │ 1383  │   712 (51%) │   37.1h     │ 14.8h
-
-⏱️ TIME ANALYSIS
-────────────────────────────────────────────────────────────────────────
-Actual Development Time:     ~10 hours
-Estimated Traditional Time:  37+ hours
-Time Saved (Conservative):   27+ hours (73%)
-
-📋 SPEC-KIT LEVERAGE
-────────────────────────────────────────────────────────────────────────
-Specification Lines:         2,392
-Source Code Lines:           1,383
-Spec-to-Code Ratio:          1.7:1
-Tasks Defined:               130+
-Test Coverage:               175 tests
-═══════════════════════════════════════════════════════════════════════
-```
-
-## 🔧 Requirements
-
-- `bash` 4.0+
-- `cloc` — Line counting (`brew install cloc`)
-- `jq` — JSON processing (`brew install jq`)
-- `git` — Version control
-- `yq` — YAML processing (`brew install yq`)
-
-## 📁 Project Structure
-
-```
-speckit-impact-analyzer/
-├── bin/
-│   ├── analyze-impact          # Main entry point
-│   └── aggregate-portfolio     # Portfolio aggregator
-├── templates/
-│   ├── impact-config.example.yaml
-│   └── report-template.md
-└── README.md
-```
-
-## 📊 Portfolio Aggregation
-
-Combine multiple project reports into an executive dashboard:
-
-```bash
-./bin/aggregate-portfolio \
-  -t "My VS Code Extensions" \
-  -o PORTFOLIO_DASHBOARD.md \
-  project1/impact-metrics.json \
-  project2/impact-metrics.json \
-  project3/impact-metrics.json
-```
-
-## 📖 Methodology
+1. **Count lines of code** using `cloc`
+2. **Classify files** into Boilerplate, Glue, Core Logic
+3. **Apply multipliers** to estimate manual coding time
+4. **Compare with git history** for actual development time
+5. **Calculate savings** based on AI assistance percentages
 
 ### Code Classification
 
-| Category | Description | AI-Assisted % | Time Multiplier |
-|----------|-------------|---------------|-----------------|
-| **Boilerplate** | Manifests, configs, type definitions | 90% | 0.5h/100 LoC |
-| **Glue Code** | Event handlers, UI bindings, utilities | 70% | 1.5h/100 LoC |
-| **Core Logic** | Unique algorithms, business rules | 30% | 4.0h/100 LoC |
-
-### Time Calculation
-
-```
-Estimated_Manual_Time = Σ (LoC_category × multiplier_category / 100)
-AI_Assisted_LoC = Σ (LoC_category × ai_percent_category / 100)
-Time_Saved = Estimated_Manual_Time × (AI_Assisted_LoC / Total_LoC)
-```
+| Type | Description | AI% | Time/100 LoC |
+|------|-------------|-----|--------------|
+| **Boilerplate** | Configs, types, manifests | 90% | 0.5h |
+| **Glue Code** | Handlers, utilities, wiring | 70% | 1.5h |
+| **Core Logic** | Unique algorithms, business rules | 35% | 4.0h |
 
 ### Git Session Detection
 
-Development time estimated from commits:
-- Commits within 2 hours = same session
-- Gap > 2 hours = new session
-- Session time = last_commit - first_commit + 30min buffer
+- Commits within 2 hours = single coding session
+- 30-minute buffer added per session
+- Bot commits excluded
 
-## 🤝 Contributing
+## Example Output
 
-PRs welcome! Areas for improvement:
-- [ ] Complexity analysis integration (ts-complex, plato)
-- [ ] Multi-language support
-- [ ] Portfolio aggregation across repos
-- [ ] GitHub Actions integration
+```
+═══════════════════════════════════════════════════════════════════════
+  📊 Spec-Kit Impact Analyzer v1.0.0
+═══════════════════════════════════════════════════════════════════════
+  
+  Results:
+    • 1383 lines of code (55% AI-assisted)
+    • 33.2h estimated manual time
+    • 14.4h saved (43%)
+    • 3.3x productivity gain
+```
 
-## 📄 License
+## License
 
 MIT
