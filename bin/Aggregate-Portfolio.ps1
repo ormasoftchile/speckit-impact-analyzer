@@ -111,6 +111,7 @@ $totalTestSaved = 0
 $projectCount = $JsonFiles.Count
 
 $projectRows = @()
+$chartData = @()  # For mermaid charts
 
 foreach ($file in $JsonFiles) {
     try {
@@ -137,9 +138,21 @@ foreach ($file in $JsonFiles) {
         
         # Calculate productivity
         $productivity = "N/A"
+        $productivityNum = 0
         if ($actual -gt 0) {
             $grandEst = if ($data.grand_total.est_manual_hours) { $data.grand_total.est_manual_hours } else { $estManual }
-            $productivity = "$([math]::Round($grandEst / $actual, 1))x"
+            $productivityNum = [math]::Round($grandEst / $actual, 1)
+            $productivity = "${productivityNum}x"
+        }
+        
+        # Store chart data
+        $chartData += @{
+            Name = $name
+            ShortName = if ($name.Length -gt 15) { $name.Substring(0, 12) + "..." } else { $name }
+            Loc = $loc
+            Saved = $saved
+            Productivity = $productivityNum
+            AiPct = $aiPct
         }
         
         # Add to totals
@@ -180,6 +193,12 @@ $specToCodeRatio = if ($totalLoc -gt 0) { [math]::Round($totalSpecLines / $total
 $dateGenerated = Get-Date -Format "yyyy-MM-dd"
 
 $projectRowsText = $projectRows -join "`n"
+
+# Generate mermaid chart data
+$pieChartLoc = ($chartData | ForEach-Object { "    `"$($_.ShortName)`" : $($_.Loc)" }) -join "`n"
+$xAxisLabels = ($chartData | ForEach-Object { "`"$($_.ShortName)`"" }) -join ", "
+$barChartSaved = ($chartData | ForEach-Object { $_.Saved }) -join ", "
+$barChartProductivity = ($chartData | ForEach-Object { $_.Productivity }) -join ", "
 
 # Format values with padding for aligned box
 $boxWidth = 76
@@ -255,6 +274,38 @@ $botBorder
 |---------|-----|-------------|-------------|--------|------------|--------------|
 $projectRowsText
 | **TOTAL** | **$totalLoc** (+$totalTestLoc test) | **$totalAiPct%** | **${totalEstManual}h** | **${totalActual}h** | **${totalSaved}h ($totalSavedPct%)** | **$totalProductivity** |
+
+---
+
+## 📊 Visual Breakdown
+
+### Lines of Code by Project
+
+``````mermaid
+pie showData
+    title Lines of Code Distribution
+$pieChartLoc
+``````
+
+### Time Saved by Project (hours)
+
+``````mermaid
+xychart-beta
+    title "Time Saved per Project (hours)"
+    x-axis [$xAxisLabels]
+    y-axis "Hours" 0 --> 200
+    bar [$barChartSaved]
+``````
+
+### Productivity Multiplier by Project
+
+``````mermaid
+xychart-beta
+    title "Productivity Gain (x faster than manual)"
+    x-axis [$xAxisLabels]
+    y-axis "Multiplier" 0 --> 35
+    bar [$barChartProductivity]
+``````
 
 ---
 
