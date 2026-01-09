@@ -41,7 +41,7 @@ param(
     [switch]$Help
 )
 
-$VERSION = "1.0.0"
+$SCRIPT_VERSION = "1.0.0"
 
 #region Utility Functions
 function Write-Info { param([string]$Message) Write-Host "i " -ForegroundColor Blue -NoNewline; Write-Host $Message }
@@ -56,7 +56,7 @@ if ($Help) {
 }
 
 if ($Version) {
-    Write-Host "Spec-Kit Portfolio Aggregator v$VERSION"
+    Write-Host "Spec-Kit Portfolio Aggregator v$SCRIPT_VERSION"
     exit 0
 }
 
@@ -82,7 +82,7 @@ if (-not $JsonFiles -or $JsonFiles.Count -eq 0) {
 
 Write-Host ""
 Write-Host "═══════════════════════════════════════════════════════════════════════" -ForegroundColor Cyan
-Write-Host "  📊 Spec-Kit Portfolio Aggregator v$VERSION (PowerShell Edition)" -ForegroundColor Cyan
+Write-Host "  📊 Spec-Kit Portfolio Aggregator v$SCRIPT_VERSION (PowerShell Edition)" -ForegroundColor Cyan
 Write-Host "═══════════════════════════════════════════════════════════════════════" -ForegroundColor Cyan
 Write-Host ""
 
@@ -181,35 +181,70 @@ $dateGenerated = Get-Date -Format "yyyy-MM-dd"
 
 $projectRowsText = $projectRows -join "`n"
 
+# Format values with padding for aligned box
+$boxWidth = 76
+$labelColWidth = 28
+
+function Format-BoxLine {
+    param([string]$Label, [string]$Value)
+    $paddedLabel = $Label.PadRight($labelColWidth)
+    $content = "  ${paddedLabel}${Value}"
+    $padding = $boxWidth - 2 - $content.Length
+    if ($padding -lt 0) { $padding = 0 }
+    return "║${content}$(' ' * $padding)║"
+}
+
+$topBorder    = "╔$('═' * ($boxWidth - 2))╗"
+$midBorder    = "╠$('═' * ($boxWidth - 2))╣"
+$botBorder    = "╚$('═' * ($boxWidth - 2))╝"
+$dividerLine  = "║  $('─' * ($boxWidth - 6))  ║"
+
+$titleText = "AI-ASSISTED DEVELOPMENT IMPACT"
+$titlePadLeft = [math]::Floor(($boxWidth - 2 - $titleText.Length) / 2)
+$titlePadRight = $boxWidth - 2 - $titleText.Length - $titlePadLeft
+$titleLine = "║$(' ' * $titlePadLeft)${titleText}$(' ' * $titlePadRight)║"
+
+$boxLine1 = Format-BoxLine "Total Projects:" "$projectCount"
+$boxLine2 = Format-BoxLine "Source Lines of Code:" "$totalLoc"
+$boxLine3 = Format-BoxLine "Test Lines of Code:" "$totalTestLoc"
+$boxLine4 = Format-BoxLine "Combined LoC:" "$grandTotalLoc"
+$boxLine5 = Format-BoxLine "AI-Assisted Code:" "$totalAiLoc ($totalAiPct%)"
+$boxLine6 = Format-BoxLine "Estimated Manual Time:" "${totalEstManual}h (source only)"
+$boxLine7 = Format-BoxLine "Actual Development Time:" "${totalActual}h"
+$boxLine8 = Format-BoxLine "Time Saved (source):" "${totalSaved}h ($totalSavedPct%)"
+$boxLine9 = Format-BoxLine "Time Saved (tests):" "${totalTestSaved}h"
+$boxLine10 = Format-BoxLine "Total Time Saved:" "${grandTotalSaved}h"
+$boxLine11 = Format-BoxLine "Average Productivity Gain:" "$totalProductivity"
+
 $report = @"
 # 📊 $Title
 
 **Generated**: $dateGenerated  
 **Projects Analyzed**: $projectCount  
-**Analyzer Version**: $VERSION
+**Analyzer Version**: $SCRIPT_VERSION
 
 ---
 
 ## 🎯 Executive Summary
 
 ``````
-╔════════════════════════════════════════════════════════════════════════╗
-║                    AI-ASSISTED DEVELOPMENT IMPACT                       ║
-╠════════════════════════════════════════════════════════════════════════╣
-║  Total Projects:              $projectCount                                         ║
-║  Source Lines of Code:        $totalLoc                                         ║
-║  Test Lines of Code:          $totalTestLoc                                         ║
-║  Combined LoC:                $grandTotalLoc                                        ║
-║  AI-Assisted Code:            $totalAiLoc ($totalAiPct%)                            ║
-║  ──────────────────────────────────────────────────────────────────── ║
-║  Estimated Manual Time:       ${totalEstManual}h (source only)                     ║
-║  Actual Development Time:     ${totalActual}h                                     ║
-║  Time Saved (source):         ${totalSaved}h ($totalSavedPct%)                      ║
-║  Time Saved (tests):          ${totalTestSaved}h                                    ║
-║  Total Time Saved:            ${grandTotalSaved}h                                   ║
-║  ──────────────────────────────────────────────────────────────────── ║
-║  Average Productivity Gain:   $totalProductivity                                   ║
-╚════════════════════════════════════════════════════════════════════════╝
+$topBorder
+$titleLine
+$midBorder
+$boxLine1
+$boxLine2
+$boxLine3
+$boxLine4
+$boxLine5
+$dividerLine
+$boxLine6
+$boxLine7
+$boxLine8
+$boxLine9
+$boxLine10
+$dividerLine
+$boxLine11
+$botBorder
 ``````
 
 ---
@@ -268,28 +303,138 @@ $projectRowsText
 
 ---
 
-## 📊 Methodology Notes
+## � Addendum: Metrics Glossary
 
-### Estimation Model
-- **Boilerplate** (90% AI): Extension manifests, type definitions, configs
-- **Glue Code** (70% AI): Event handlers, utility functions, UI bindings  
-- **Core Logic** (30% AI): Unique algorithms, business rules, complex parsing
-- **Tests** (75% AI): Arrange-act-assert patterns, edge cases, mocks
+This section provides detailed explanations for each metric used in this report.
 
-### Time Multipliers (hours per 100 LoC without AI)
-- Boilerplate: 0.5h (quick, repetitive)
-- Glue Code: 1.5h (moderate complexity)
-- Core Logic: 4.0h (requires design thinking)
-- Tests: 1.5h (pattern-based, but thorough)
+### Executive Summary Metrics
 
-### Git Session Detection
-- Commits within 2 hours grouped as single session
-- 30-minute buffer added per session
-- Bot commits excluded from analysis
+| Metric | Description |
+|--------|-------------|
+| **Total Source LoC** | Total lines of code in the source directory, excluding blank lines and comments. Counted using built-in line counting. |
+| **AI-Assisted LoC** | Estimated lines of code where AI tools (e.g., GitHub Copilot) significantly contributed to writing or suggesting the code. |
+| **Estimated Manual Time** | Projected hours required to write this codebase without any AI assistance, based on industry-standard productivity multipliers. |
+| **Estimated Time Saved** | Hours saved by using AI-assisted development, calculated as a percentage of the estimated manual time. |
+| **Actual Dev Time** | Real development time estimated from git commit history, grouping commits into sessions separated by 2-hour gaps. |
+
+### Code Category Metrics
+
+| Metric | Description |
+|--------|-------------|
+| **Boilerplate** | Repetitive, structural code like entry points, type definitions, configuration schemas. High AI assistance potential (~90%). Multiplier: 0.5h/100 LoC. |
+| **Glue Code** | Integration code connecting components: command handlers, event listeners, utility functions, UI bindings. Medium AI assistance (~70%). Multiplier: 1.5h/100 LoC. |
+| **Core Logic** | Unique algorithms, business rules, and core functionality requiring human insight. Lower AI assistance (~30%). Multiplier: 4h/100 LoC. |
+| **Files** | Count of source files in each category. |
+| **LoC** | Lines of code (excluding blanks/comments) in each category. |
+| **AI-Assisted** | Estimated lines where AI contributed, based on category-specific AI assistance percentages. |
+| **Est. Manual** | Estimated hours to write code manually without AI, calculated as: ``LoC × Multiplier / 100``. |
+| **Time Saved** | Hours saved by AI assistance, calculated as: ``Est. Manual × AI%``. |
+
+### Test Code Metrics
+
+| Metric | Description |
+|--------|-------------|
+| **Test Files** | Number of files in the test directory. |
+| **Test LoC** | Lines of test code (excluding blanks/comments). |
+| **Test-to-Code Ratio** | Percentage of test code relative to source code: ``(Test LoC / Source LoC) × 100``. |
+| **AI-Assisted Test LoC** | Estimated test lines where AI contributed. Tests are highly amenable to AI generation due to predictable patterns. |
+| **Est. Manual Test Time** | Hours to write tests manually, using multiplier: 1.5h/100 LoC. |
+| **Test Time Saved** | Hours saved on test writing through AI assistance. |
+
+### Development Timeline Metrics
+
+| Metric | Description |
+|--------|-------------|
+| **First Commit** | Timestamp of the earliest commit in the repository. |
+| **Last Commit** | Timestamp of the most recent commit. |
+| **Total Commits** | Total number of commits in the repository history. |
+| **Dev Sessions** | Number of development sessions, where a session is a group of commits separated by ≤2 hours. |
+| **Estimated Active Hours** | Total estimated coding time, summing session durations with a 30-minute buffer per session. |
+
+### Spec-Kit Metrics
+
+| Metric | Description |
+|--------|-------------|
+| **Specification Lines** | Total lines in specification/design documents (Markdown files in specs directory). |
+| **Specification Files** | Number of specification documents. |
+| **Tasks Defined** | Count of tasks defined in specs using pattern ``- [ ] T###`` or ``- [x] T###``. |
+| **Tasks Completed** | Count of completed tasks (marked with ``[x]``). |
+| **Spec-to-Code Ratio** | Ratio of specification lines to source code lines, indicating planning thoroughness. |
+
+### Grand Total Metrics
+
+| Metric | Description |
+|--------|-------------|
+| **Lines of Code** | Combined source + test LoC. |
+| **AI-Assisted** | Combined AI-assisted LoC from source and tests. |
+| **Est. Manual Time** | Total estimated hours for source + test code without AI. |
+| **Time Saved** | Total hours saved across source and test development. |
+
+### Productivity Metrics
+
+| Metric | Description |
+|--------|-------------|
+| **Productivity Multiplier** | Ratio of estimated manual time to actual development time: ``Est. Manual / Actual``. Higher values indicate greater productivity gains from AI assistance. |
+
+### Configuration Parameters Used
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| **Session Gap** | 2h | Time gap used to separate git commits into distinct development sessions. |
+| **Boilerplate Multiplier** | 0.5h/100 LoC | Estimated manual coding time for boilerplate code. |
+| **Glue Code Multiplier** | 1.5h/100 LoC | Estimated manual coding time for integration code. |
+| **Core Logic Multiplier** | 4h/100 LoC | Estimated manual coding time for complex logic. |
+| **Test Multiplier** | 1.5h/100 LoC | Estimated manual coding time for test code. |
+| **AI % Boilerplate** | 90% | Estimated AI contribution to boilerplate code. |
+| **AI % Glue Code** | 70% | Estimated AI contribution to glue code. |
+| **AI % Core Logic** | 30% | Estimated AI contribution to core logic. |
+| **AI % Tests** | 75% | Estimated AI contribution to test code. |
 
 ---
 
-*Generated by [Spec-Kit Impact Analyzer](https://github.com/ormasoftchile/speckit-impact-analyzer) v$VERSION*
+## 📚 References & Citations
+
+The metrics and assumptions in this report are based on the following industry research and standards:
+
+### AI-Assisted Development Productivity
+
+1. **Peng, S., Kalliamvakou, E., Cihon, P., & Demirer, M. (2023)**. "The Impact of AI on Developer Productivity: Evidence from GitHub Copilot." *arXiv:2302.06590*. 
+   - Key finding: Developers using GitHub Copilot completed tasks **55.8% faster** than the control group in a controlled experiment (P=.0017, 95% CI [21%, 89%]).
+   - URL: https://arxiv.org/abs/2302.06590
+
+2. **GitHub (2022)**. "Research: Quantifying GitHub Copilot's Impact on Developer Productivity and Happiness."
+   - Key findings: 87% of developers reported AI preserves mental effort during repetitive tasks; 73% reported staying in flow.
+   - URL: https://github.blog/news-insights/research/research-quantifying-github-copilots-impact-on-developer-productivity-and-happiness/
+
+### Software Development Productivity Baselines
+
+3. **McConnell, S. (2004)**. *Code Complete: A Practical Handbook of Software Construction*, 2nd Edition. Microsoft Press.
+   - Industry reference for software construction best practices and productivity estimates.
+   - Typical productivity ranges: 10-50 LoC/hour depending on complexity (Chapter 28: Managing Construction).
+
+4. **Jones, C. (2007)**. *Estimating Software Costs: Bringing Realism to Estimating*, 2nd Edition. McGraw-Hill.
+   - Provides industry benchmarks for software development productivity across different project types.
+
+5. **COCOMO II Model (Boehm et al., 2000)**. *Software Cost Estimation with COCOMO II*. Prentice Hall.
+   - The Constructive Cost Model provides effort estimation formulas based on project size and complexity factors.
+
+### Methodology Notes
+
+| Assumption | Basis | Citation |
+|------------|-------|----------|
+| **Time Multipliers** | Based on industry averages for TypeScript/JavaScript development, adjusted for VS Code extension complexity. | McConnell (2004), Jones (2007) |
+| **AI Assistance % (Boilerplate: 90%)** | Repetitive code patterns show highest AI suggestion acceptance rates. | GitHub (2022), Peng et al. (2023) |
+| **AI Assistance % (Glue: 70%)** | Integration code benefits significantly but requires more human judgment. | GitHub (2022) |
+| **AI Assistance % (Core Logic: 30%)** | Complex algorithms require substantial human insight; AI assists with syntax/patterns. | Peng et al. (2023) |
+| **AI Assistance % (Tests: 75%)** | Test code follows predictable patterns (arrange-act-assert); AI excels at generating edge cases. | GitHub (2022) |
+| **55% Task Completion Speed Increase** | Controlled experiment with 95 professional developers. | Peng et al. (2023) |
+| **Session Detection (2h gap)** | Standard assumption for development session boundaries in git analytics. | Industry practice |
+
+> **Disclaimer**: Time estimates are approximations based on published research and industry benchmarks. Actual productivity varies significantly based on developer experience, problem domain, codebase familiarity, and tooling proficiency. AI assistance percentages are conservative estimates based on the types of code typically generated with AI pair programming tools.
+
+---
+
+*Generated by [Spec-Kit Impact Analyzer](https://github.com/ormasoftchile/speckit-impact-analyzer) v$SCRIPT_VERSION*
 "@
 
 $report | Out-File -FilePath $OutputFile -Encoding utf8

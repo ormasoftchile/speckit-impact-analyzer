@@ -30,3 +30,8 @@ coverage/
 # Temp files
 *.tmp
 *.temp
+
+# Generated reports (user-specific)
+IMPACT_REPORT.md
+PORTFOLIO_DASHBOARD.md
+impact-metrics.json

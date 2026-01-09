@@ -92,11 +92,32 @@ cd C:\path\to\speckit-impact-analyzer
 # Or with options
 .\bin\Analyze-Impact.ps1 -ProjectPath C:\MyProject -Json -OutputFile MyReport.md
 
-# 3. View the report
+# 3. For subfolder projects (where .git is in a parent directory)
+.\bin\Analyze-Impact.ps1 -ProjectPath C:\MonoRepo\apps\my-app -IncludeInlineTests
+
+# 4. View the report
 Get-Content C:\path\to\your\project\IMPACT_REPORT.md
 
-# 4. Aggregate multiple projects
+# 5. Aggregate multiple projects
 .\bin\Aggregate-Portfolio.ps1 proj1\impact-metrics.json proj2\impact-metrics.json
+```
+
+### Subfolder Projects
+
+If your project is in a subfolder of a larger repo (common in monorepos), the analyzer will:
+- **Auto-discover** the git root by searching parent directories
+- **Filter commits** to only include those affecting your subfolder
+- **Handle case-sensitivity** correctly on Windows (git paths are case-sensitive)
+
+```powershell
+# The analyzer auto-discovers git root:
+.\bin\Analyze-Impact.ps1 -ProjectPath C:\MonoRepo\packages\my-package
+
+# Or specify it explicitly:
+.\bin\Analyze-Impact.ps1 -ProjectPath C:\MonoRepo\packages\my-package -GitRoot C:\MonoRepo
+
+# Include inline test files (*.test.ts, *.spec.ts) from source directory:
+.\bin\Analyze-Impact.ps1 -ProjectPath C:\MyProject -IncludeInlineTests
 ```
 
 ## Commands
@@ -131,6 +152,20 @@ speckit-analyze /path/to/project        # Basic analysis
 speckit-analyze /path/to/project -j     # Also output JSON metrics
 speckit-analyze /path/to/project -v     # Verbose output
 ```
+
+**PowerShell Parameters:**
+
+| Parameter | Alias | Description |
+|-----------|-------|-------------|
+| `-ProjectPath` | | Path to the project directory (default: current) |
+| `-ConfigFile` | `-c` | Path to config file (default: impact-config.yaml) |
+| `-OutputFile` | `-o` | Output report path (default: IMPACT_REPORT.md) |
+| `-Json` | `-j` | Also output JSON metrics |
+| `-Quiet` | `-q` | Suppress progress output |
+| `-GitRoot` | `-g` | Path to git repository root (for subfolder projects) |
+| `-IncludeInlineTests` | | Include `*.test.ts`, `*.spec.ts` files from source dir |
+| `-ShowVersion` | `-v` | Show version and exit |
+| `-Help` | `-h` | Show help |
 
 **Output files:**
 - `IMPACT_REPORT.md` - Human-readable report
