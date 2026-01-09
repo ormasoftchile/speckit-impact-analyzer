@@ -125,6 +125,9 @@ main() {
     local total_spec_lines=0
     local total_tasks=0
     local total_tasks_complete=0
+    local total_test_loc=0
+    local total_test_files=0
+    local total_test_saved=0
     local project_count=${#json_files[@]}
     
     # Build project rows
@@ -145,10 +148,22 @@ main() {
         local tasks=$(jq -r '.speckit.tasks_total // 0' "$file")
         local tasks_complete=$(jq -r '.speckit.tasks_complete // 0' "$file")
         
-        # Calculate productivity multiplier
+        # Test metrics
+        local test_loc=$(jq -r '.tests.loc // 0' "$file")
+        local test_files=$(jq -r '.tests.files // 0' "$file")
+        local test_saved=$(jq -r '.tests.saved_hours // 0' "$file")
+        local grand_loc=$(jq -r '.grand_total.loc // 0' "$file")
+        local grand_saved=$(jq -r '.grand_total.saved_hours // 0' "$file")
+        
+        # Calculate productivity multiplier (using grand total)
         local productivity="N/A"
         if [[ $(echo "$actual > 0" | bc) -eq 1 ]]; then
-            productivity=$(echo "scale=1; $est_manual / $actual" | bc)x
+            local grand_est=$(jq -r '.grand_total.est_manual_hours // 0' "$file")
+            if [[ $(echo "$grand_est > 0" | bc) -eq 1 ]]; then
+                productivity=$(echo "scale=1; $grand_est / $actual" | bc)x
+            else
+                productivity=$(echo "scale=1; $est_manual / $actual" | bc)x
+            fi
         fi
         
         # Add to totals
@@ -161,9 +176,16 @@ main() {
         total_spec_lines=$((total_spec_lines + spec_lines))
         total_tasks=$((total_tasks + tasks))
         total_tasks_complete=$((total_tasks_complete + tasks_complete))
+        total_test_loc=$((total_test_loc + test_loc))
+        total_test_files=$((total_test_files + test_files))
+        total_test_saved=$(echo "$total_test_saved + $test_saved" | bc)
         
-        # Build row
-        project_rows+="| **${name}** | ${loc} | ${ai_pct}% | ${est_manual}h | ${actual}h | ${saved}h (${saved_pct}%) | ${productivity} |"$'\n'
+        # Build row with test info
+        local test_info=""
+        if [[ $test_loc -gt 0 ]]; then
+            test_info=" (+${test_loc} test)"
+        fi
+        project_rows+="| **${name}** | ${loc}${test_info} | ${ai_pct}% | ${est_manual}h | ${actual}h | ${saved}h (${saved_pct}%) | ${productivity} |"$'\n'
         
         log_success "Processed: $name"
     done
@@ -178,6 +200,10 @@ main() {
     if [[ $(echo "$total_est_manual > 0" | bc) -eq 1 ]]; then
         total_saved_pct=$(echo "scale=0; $total_saved * 100 / $total_est_manual" | bc)
     fi
+    
+    # Grand totals including tests
+    local grand_total_loc=$((total_loc + total_test_loc))
+    local grand_total_saved=$(echo "$total_saved + $total_test_saved" | bc)
     
     local total_productivity="N/A"
     if [[ $(echo "$total_actual > 0" | bc) -eq 1 ]]; then
@@ -208,12 +234,16 @@ main() {
 ║                    AI-ASSISTED DEVELOPMENT IMPACT                       ║
 ╠════════════════════════════════════════════════════════════════════════╣
 ║  Total Projects:              ${project_count}                                         ║
-║  Total Lines of Code:         $(printf "%-10s" "${total_loc}")                              ║
+║  Source Lines of Code:        $(printf "%-10s" "${total_loc}")                              ║
+║  Test Lines of Code:          $(printf "%-10s" "${total_test_loc}")                              ║
+║  Combined LoC:                $(printf "%-10s" "${grand_total_loc}")                              ║
 ║  AI-Assisted Code:            ${total_ai_loc} (${total_ai_pct}%)                              ║
 ║  ──────────────────────────────────────────────────────────────────── ║
-║  Estimated Manual Time:       ${total_est_manual}h                                    ║
+║  Estimated Manual Time:       ${total_est_manual}h (source only)                      ║
 ║  Actual Development Time:     ${total_actual}h                                     ║
-║  Time Saved:                  ${total_saved}h (${total_saved_pct}%)                           ║
+║  Time Saved (source):         ${total_saved}h (${total_saved_pct}%)                           ║
+║  Time Saved (tests):          ${total_test_saved}h                                    ║
+║  Total Time Saved:            ${grand_total_saved}h                                   ║
 ║  ──────────────────────────────────────────────────────────────────── ║
 ║  Average Productivity Gain:   ${total_productivity}                                     ║
 ╚════════════════════════════════════════════════════════════════════════╝
@@ -225,7 +255,20 @@ main() {
 
 | Project | LoC | AI-Assisted | Est. Manual | Actual | Time Saved | Productivity |
 |---------|-----|-------------|-------------|--------|------------|--------------|
-${project_rows}| **TOTAL** | **${total_loc}** | **${total_ai_pct}%** | **${total_est_manual}h** | **${total_actual}h** | **${total_saved}h (${total_saved_pct}%)** | **${total_productivity}** |
+${project_rows}| **TOTAL** | **${total_loc}** (+${total_test_loc} test) | **${total_ai_pct}%** | **${total_est_manual}h** | **${total_actual}h** | **${total_saved}h (${total_saved_pct}%)** | **${total_productivity}** |
+
+---
+
+## 🧪 Test Code Summary
+
+| Metric | Value |
+|--------|-------|
+| **Total Test Files** | ${total_test_files} |
+| **Total Test LoC** | ${total_test_loc} |
+| **Test-to-Source Ratio** | $(echo "scale=0; $total_test_loc * 100 / ($total_loc + 1)" | bc)% |
+| **Test Time Saved** | ${total_test_saved}h |
+
+> Tests are highly AI-friendly (75% AI-assisted by default) due to their predictable arrange-act-assert patterns.
 
 ---
 
@@ -244,14 +287,15 @@ ${project_rows}| **TOTAL** | **${total_loc}** | **${total_ai_pct}%** | **${total
 ## 🔍 Key Insights
 
 ### Time Efficiency
-- **${total_saved}h saved** across ${project_count} projects
+- **${grand_total_saved}h saved** across ${project_count} projects (${total_saved}h source + ${total_test_saved}h tests)
 - Average productivity gain of **${total_productivity}** compared to traditional development
-- AI assistance particularly effective for boilerplate and glue code (70-90% AI-assisted)
+- AI assistance particularly effective for boilerplate, glue code, and tests (70-90% AI-assisted)
 
 ### Methodology Benefits
 - Structured specifications enable focused AI prompts
 - Task-based development provides clear checkpoints
 - Spec-Kit templates accelerate project scaffolding
+- Test generation highly AI-friendly due to predictable patterns
 
 ### Code Quality Maintained
 - Complex core logic still requires human design (30-40% AI-assisted)
@@ -266,11 +310,13 @@ ${project_rows}| **TOTAL** | **${total_loc}** | **${total_ai_pct}%** | **${total
 - **Boilerplate** (90% AI): Extension manifests, type definitions, configs
 - **Glue Code** (70% AI): Event handlers, utility functions, UI bindings  
 - **Core Logic** (30% AI): Unique algorithms, business rules, complex parsing
+- **Tests** (75% AI): Arrange-act-assert patterns, edge cases, mocks
 
 ### Time Multipliers (hours per 100 LoC without AI)
 - Boilerplate: 0.5h (quick, repetitive)
 - Glue Code: 1.5h (moderate complexity)
 - Core Logic: 4.0h (requires design thinking)
+- Tests: 1.5h (pattern-based, but thorough)
 
 ### Git Session Detection
 - Commits within 2 hours grouped as single session

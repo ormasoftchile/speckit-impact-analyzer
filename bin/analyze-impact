@@ -173,6 +173,7 @@ collect_test_metrics() {
     TEST_LOC=0
     TEST_FILES=0
     TEST_COMMENTS=0
+    TEST_RATIO=0
     
     if [[ ! -d "$test_path" ]]; then
         log_warn "Test directory not found: $test_path"
@@ -188,7 +189,7 @@ collect_test_metrics() {
     TEST_COMMENTS=$(echo "$test_cloc" | jq '.SUM.comment // 0')
     
     # Calculate test-to-code ratio
-    if [[ $TOTAL_LOC -gt 0 ]]; then
+    if [[ $TOTAL_LOC -gt 0 && $TEST_LOC -gt 0 ]]; then
         TEST_RATIO=$(echo "scale=2; $TEST_LOC * 100 / $TOTAL_LOC" | bc)
     else
         TEST_RATIO=0
