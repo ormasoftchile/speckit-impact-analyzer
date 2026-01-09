@@ -9,11 +9,11 @@ Measure the productivity impact of AI-assisted development using the Spec-Kit me
 - **Classify code** into Boilerplate / Glue / Core Logic
 - **Calculate AI-assisted code percentage** and time savings
 - **Generate portfolio dashboards** for multiple projects
-- **Cross-platform** - works on macOS, Linux, and Windows (via WSL/Git Bash)
+- **Cross-platform** - works on macOS, Linux, and Windows (native PowerShell!)
 
 ## Installation
 
-### Option 1: npm (Recommended)
+### Option 1: npm (Recommended for macOS/Linux)
 
 ```bash
 # Install globally
@@ -37,15 +37,34 @@ npm install
 npm link
 ```
 
+### Option 3: PowerShell (Windows - No WSL Required!)
+
+The PowerShell scripts work natively on Windows without any Unix dependencies:
+
+```powershell
+# Clone the repo
+git clone https://github.com/ormasoftchile/speckit-impact-analyzer.git
+
+# Run directly with PowerShell
+.\bin\Analyze-Impact.ps1 -ProjectPath C:\path\to\project
+.\bin\Aggregate-Portfolio.ps1 project1\impact-metrics.json project2\impact-metrics.json
+```
+
 ### Requirements
 
+**macOS/Linux:**
 - **Node.js 16+**
-- **cloc** - `brew install cloc` (macOS) / `apt install cloc` (Linux) / `choco install cloc` (Windows)
-- **jq** - `brew install jq` (macOS) / `apt install jq` (Linux) / `choco install jq` (Windows)  
-- **yq** - `brew install yq` (macOS) / `pip install yq` / [Download](https://github.com/mikefarah/yq/releases)
-- **Windows**: Requires WSL or Git Bash
+- **cloc** - `brew install cloc` (macOS) / `apt install cloc` (Linux)
+- **jq** - `brew install jq` (macOS) / `apt install jq` (Linux)
+- **yq** - `brew install yq` (macOS) / `pip install yq`
+
+**Windows (PowerShell) - No external tools required!**
+- **PowerShell 5.1+** (pre-installed on Windows 10/11)
+- **Git** (for timeline analysis)
 
 ## Quick Start
+
+### macOS/Linux
 
 ```bash
 # 1. Initialize config for your project (auto-detects project type)
@@ -59,6 +78,25 @@ speckit-analyze /path/to/project
 
 # 4. View the report
 cat /path/to/project/IMPACT_REPORT.md
+```
+
+### Windows (PowerShell)
+
+```powershell
+# 1. Navigate to the analyzer directory
+cd C:\path\to\speckit-impact-analyzer
+
+# 2. Run the analysis (creates impact-config.yaml if needed)
+.\bin\Analyze-Impact.ps1 -ProjectPath C:\path\to\your\project
+
+# Or with options
+.\bin\Analyze-Impact.ps1 -ProjectPath C:\MyProject -Json -OutputFile MyReport.md
+
+# 3. View the report
+Get-Content C:\path\to\your\project\IMPACT_REPORT.md
+
+# 4. Aggregate multiple projects
+.\bin\Aggregate-Portfolio.ps1 proj1\impact-metrics.json proj2\impact-metrics.json
 ```
 
 ## Commands
@@ -103,12 +141,65 @@ speckit-analyze /path/to/project -v     # Verbose output
 Combine multiple projects into a portfolio dashboard:
 
 ```bash
+# macOS/Linux
 speckit-portfolio \
   project1/impact-metrics.json \
   project2/impact-metrics.json \
   project3/impact-metrics.json \
   -o PORTFOLIO_DASHBOARD.md
 ```
+
+```powershell
+# Windows PowerShell
+.\bin\Aggregate-Portfolio.ps1 `
+  project1\impact-metrics.json `
+  project2\impact-metrics.json `
+  -OutputFile PORTFOLIO_DASHBOARD.md -Title "My Portfolio"
+```
+
+---
+
+## Windows PowerShell Reference
+
+### Analyze-Impact.ps1
+
+```powershell
+.\bin\Analyze-Impact.ps1 [OPTIONS] [-ProjectPath <path>]
+
+Options:
+  -ProjectPath     Path to project (default: current directory)
+  -ConfigFile, -c  Config file path (default: impact-config.yaml)
+  -OutputFile, -o  Output report path (default: IMPACT_REPORT.md)
+  -Json, -j        Also output JSON metrics
+  -Quiet, -q       Suppress progress output
+  -Version, -v     Show version
+  -Help, -h        Show help
+
+Examples:
+  .\bin\Analyze-Impact.ps1                                    # Analyze current directory
+  .\bin\Analyze-Impact.ps1 -ProjectPath C:\MyProject          # Analyze specific project
+  .\bin\Analyze-Impact.ps1 C:\MyProject -Json                 # With JSON output
+  .\bin\Analyze-Impact.ps1 -c custom-config.yaml              # Custom config
+```
+
+### Aggregate-Portfolio.ps1
+
+```powershell
+.\bin\Aggregate-Portfolio.ps1 [OPTIONS] <json_files...>
+
+Options:
+  -OutputFile, -o  Output path (default: PORTFOLIO_DASHBOARD.md)
+  -Title, -t       Dashboard title
+  -Version, -v     Show version
+  -Help, -h        Show help
+
+Examples:
+  .\bin\Aggregate-Portfolio.ps1 proj1\impact-metrics.json proj2\impact-metrics.json
+  .\bin\Aggregate-Portfolio.ps1 -o portfolio.md *\impact-metrics.json
+  .\bin\Aggregate-Portfolio.ps1 -Title "Q4 Projects" proj1\*.json proj2\*.json
+```
+
+---
 
 ## Configuration
 
