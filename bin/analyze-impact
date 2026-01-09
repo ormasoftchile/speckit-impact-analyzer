@@ -114,10 +114,12 @@ load_config() {
     MULT_BOILERPLATE=$(yq '.multipliers.boilerplate // 0.5' "$config_file")
     MULT_GLUE=$(yq '.multipliers.glue_code // 1.5' "$config_file")
     MULT_LOGIC=$(yq '.multipliers.core_logic // 4.0' "$config_file")
+    MULT_TEST=$(yq '.multipliers.tests // 1.5' "$config_file")
     
     AI_BOILERPLATE=$(yq '.ai_percent.boilerplate // 90' "$config_file")
     AI_GLUE=$(yq '.ai_percent.glue_code // 70' "$config_file")
     AI_LOGIC=$(yq '.ai_percent.core_logic // 30' "$config_file")
+    AI_TEST=$(yq '.ai_percent.tests // 75' "$config_file")
     
     SESSION_GAP_HOURS=$(yq '.git.session_gap_hours // 2' "$config_file")
     
@@ -160,6 +162,39 @@ collect_code_metrics() {
     CLOC_BY_FILE=$(cloc "$source_path" --exclude-dir="$EXCLUDE_DIRS" --by-file --json 2>/dev/null || echo '{}')
     
     log_success "Found $TOTAL_FILES files with $TOTAL_LOC lines of code"
+}
+
+collect_test_metrics() {
+    log_header "🧪 Collecting Test Metrics"
+    
+    local test_path="${PROJECT_PATH}/${TEST_DIR}"
+    
+    # Initialize test metrics
+    TEST_LOC=0
+    TEST_FILES=0
+    TEST_COMMENTS=0
+    
+    if [[ ! -d "$test_path" ]]; then
+        log_warn "Test directory not found: $test_path"
+        return
+    fi
+    
+    # Get test code metrics
+    local test_cloc
+    test_cloc=$(cloc "$test_path" --exclude-dir="node_modules,coverage,__snapshots__" --json 2>/dev/null || echo '{}')
+    
+    TEST_LOC=$(echo "$test_cloc" | jq '.SUM.code // 0')
+    TEST_FILES=$(echo "$test_cloc" | jq '.SUM.nFiles // 0')
+    TEST_COMMENTS=$(echo "$test_cloc" | jq '.SUM.comment // 0')
+    
+    # Calculate test-to-code ratio
+    if [[ $TOTAL_LOC -gt 0 ]]; then
+        TEST_RATIO=$(echo "scale=2; $TEST_LOC * 100 / $TOTAL_LOC" | bc)
+    else
+        TEST_RATIO=0
+    fi
+    
+    log_success "Found $TEST_FILES test files with $TEST_LOC lines of test code (${TEST_RATIO}% of source)"
 }
 
 classify_files() {
@@ -337,7 +372,31 @@ calculate_impact() {
         SAVED_PERCENT=0
     fi
     
+    # Test effort calculations
+    # Test code typically takes ~1.5h/100 LoC manually, but AI accelerates by ~75%
+    MULT_TEST=${MULT_TEST:-1.5}
+    AI_TEST=${AI_TEST:-75}
+    
+    EST_TIME_TESTS=$(echo "scale=1; $TEST_LOC * $MULT_TEST / 100" | bc)
+    AI_LOC_TESTS=$(echo "scale=0; $TEST_LOC * $AI_TEST / 100" | bc)
+    SAVED_TESTS=$(echo "scale=1; $EST_TIME_TESTS * $AI_TEST / 100" | bc)
+    
+    # Grand totals including tests
+    GRAND_TOTAL_LOC=$((TOTAL_LOC + TEST_LOC))
+    GRAND_EST_TIME=$(echo "scale=1; $EST_TIME_TOTAL + $EST_TIME_TESTS" | bc)
+    GRAND_SAVED=$(echo "scale=1; $SAVED_TOTAL + $SAVED_TESTS" | bc)
+    GRAND_AI_LOC=$((AI_LOC_TOTAL + AI_LOC_TESTS))
+    
+    if [[ $GRAND_TOTAL_LOC -gt 0 ]]; then
+        GRAND_AI_PERCENT=$(echo "scale=0; $GRAND_AI_LOC * 100 / $GRAND_TOTAL_LOC" | bc)
+    else
+        GRAND_AI_PERCENT=0
+    fi
+    
     log_success "Analysis complete: ${AI_PERCENT_TOTAL}% AI-assisted, ${SAVED_PERCENT}% time saved"
+    if [[ $TEST_LOC -gt 0 ]]; then
+        log_success "Tests: ${TEST_LOC} LoC (${AI_TEST}% AI-assisted), ${EST_TIME_TESTS}h manual → ${SAVED_TESTS}h saved"
+    fi
 }
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -386,6 +445,38 @@ generate_report() {
 - **Boilerplate**: Extension entry points, type definitions, configuration schemas
 - **Glue Code**: Command handlers, event listeners, utility functions, UI bindings
 - **Core Logic**: Unique algorithms, business rules, core functionality
+
+---
+
+## 🧪 Test Code Impact
+
+| Metric | Value |
+|--------|-------|
+| **Test Files** | ${TEST_FILES} |
+| **Test LoC** | ${TEST_LOC} |
+| **Test-to-Code Ratio** | ${TEST_RATIO}% |
+| **AI-Assisted Test LoC** | ${AI_LOC_TESTS} (${AI_TEST}%) |
+| **Est. Manual Test Time** | ${EST_TIME_TESTS}h |
+| **Test Time Saved** | ${SAVED_TESTS}h |
+
+### Testing Insights
+
+Writing comprehensive tests manually would have taken approximately **${EST_TIME_TESTS}h**. With AI assistance, an estimated **${SAVED_TESTS}h** was saved on test development alone.
+
+> **Test Effort Model**: Test code @ ${MULT_TEST}h/100 LoC, ${AI_TEST}% AI-assisted
+> 
+> Tests are highly amenable to AI generation because they follow predictable patterns (arrange-act-assert) and AI excels at generating edge cases and boilerplate setup.
+
+---
+
+## 📊 Grand Total (Source + Tests)
+
+| Metric | Source | Tests | Combined |
+|--------|--------|-------|----------|
+| **Lines of Code** | ${TOTAL_LOC} | ${TEST_LOC} | ${GRAND_TOTAL_LOC} |
+| **AI-Assisted** | ${AI_LOC_TOTAL} | ${AI_LOC_TESTS} | ${GRAND_AI_LOC} (${GRAND_AI_PERCENT}%) |
+| **Est. Manual Time** | ${EST_TIME_TOTAL}h | ${EST_TIME_TESTS}h | ${GRAND_EST_TIME}h |
+| **Time Saved** | ${SAVED_TOTAL}h | ${SAVED_TESTS}h | ${GRAND_SAVED}h |
 
 ---
 
@@ -474,6 +565,15 @@ generate_json() {
     "comments": ${TOTAL_COMMENTS:-0},
     "blank": ${TOTAL_BLANK:-0}
   },
+  "tests": {
+    "loc": ${TEST_LOC:-0},
+    "files": ${TEST_FILES:-0},
+    "ratio_percent": ${TEST_RATIO:-0},
+    "ai_loc": ${AI_LOC_TESTS:-0},
+    "ai_percent": ${AI_TEST:-75},
+    "est_manual_hours": ${EST_TIME_TESTS:-0},
+    "saved_hours": ${SAVED_TESTS:-0}
+  },
   "classification": {
     "boilerplate": { "files": ${FILES_BOILERPLATE}, "loc": ${LOC_BOILERPLATE} },
     "glue_code": { "files": ${FILES_GLUE}, "loc": ${LOC_GLUE} },
@@ -493,6 +593,13 @@ generate_json() {
     "estimated_saved_hours": ${SAVED_TOTAL},
     "saved_percent": ${SAVED_PERCENT},
     "actual_hours": ${GIT_ESTIMATED_HOURS:-0}
+  },
+  "grand_total": {
+    "loc": ${GRAND_TOTAL_LOC:-${TOTAL_LOC}},
+    "ai_loc": ${GRAND_AI_LOC:-${AI_LOC_TOTAL}},
+    "ai_percent": ${GRAND_AI_PERCENT:-${AI_PERCENT_TOTAL}},
+    "est_manual_hours": ${GRAND_EST_TIME:-${EST_TIME_TOTAL}},
+    "saved_hours": ${GRAND_SAVED:-${SAVED_TOTAL}}
   },
   "git": {
     "first_commit": "${GIT_FIRST_COMMIT:-}",
@@ -580,6 +687,7 @@ main() {
     
     # Collect metrics
     collect_code_metrics
+    collect_test_metrics
     classify_files
     analyze_git_timeline
     analyze_speckit
@@ -597,9 +705,12 @@ main() {
     echo -e "${BOLD}═══════════════════════════════════════════════════════════════════════${NC}"
     echo ""
     echo -e "  ${BOLD}Results:${NC}"
-    echo -e "    • ${TOTAL_LOC} lines of code (${AI_PERCENT_TOTAL}% AI-assisted)"
-    echo -e "    • ${EST_TIME_TOTAL}h estimated manual time"
-    echo -e "    • ${SAVED_TOTAL}h saved (${SAVED_PERCENT}%)"
+    echo -e "    • ${TOTAL_LOC} lines of source code (${AI_PERCENT_TOTAL}% AI-assisted)"
+    if [[ $TEST_LOC -gt 0 ]]; then
+        echo -e "    • ${TEST_LOC} lines of test code (${AI_TEST}% AI-assisted)"
+    fi
+    echo -e "    • ${GRAND_EST_TIME}h estimated manual time (source + tests)"
+    echo -e "    • ${GRAND_SAVED}h saved (${SAVED_PERCENT}%)"
     echo ""
     echo -e "  ${BOLD}Output:${NC}"
     echo -e "    • ${OUTPUT_FILE}"

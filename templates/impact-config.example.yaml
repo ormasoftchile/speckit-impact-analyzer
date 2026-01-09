@@ -14,7 +14,7 @@ project:
 # ═══════════════════════════════════════════════════════════════════════
 paths:
   source: "src/"           # Main source directory
-  tests: "test/"           # Test directory
+  tests: "test/"           # Test directory (now analyzed separately!)
   specs: "specs/"          # Spec-Kit specifications
   exclude:                 # Directories to exclude from analysis
     - "node_modules"
@@ -33,7 +33,6 @@ classification:
     - "extension.ts"
     - "types/**/*.ts"
     - "config/**/*.ts"
-    # Add patterns for config files, type definitions, etc.
     
   glue_code:
     # Commands, event handlers, UI bindings, utilities
@@ -41,7 +40,6 @@ classification:
     - "utils/**/*.ts"
     - "webview/**/*.ts"
     - "handlers/**/*.ts"
-    # Add patterns for integration code
     
   core_logic:
     # Unique algorithms, business logic, core functionality
@@ -49,7 +47,6 @@ classification:
     - "conversion/**/*.ts"
     - "engine/**/*.ts"
     - "services/**/*.ts"
-    # Add patterns for core business logic
 
 # ═══════════════════════════════════════════════════════════════════════
 # TIME MULTIPLIERS
@@ -60,6 +57,7 @@ multipliers:
   boilerplate: 0.5   # Quick to write, lots of copy-paste
   glue_code: 1.5     # Moderate complexity, some research needed
   core_logic: 4.0    # Complex, requires deep thinking and iteration
+  tests: 1.5         # Test code - arrange/act/assert patterns
 
 # ═══════════════════════════════════════════════════════════════════════
 # AI ASSISTANCE ESTIMATES
@@ -70,6 +68,7 @@ ai_percent:
   boilerplate: 90    # Copilot excels at boilerplate
   glue_code: 70      # Good with patterns, needs guidance
   core_logic: 30     # Human designs, AI assists implementation
+  tests: 75          # Tests follow patterns, AI generates edge cases well
 
 # ═══════════════════════════════════════════════════════════════════════
 # GIT ANALYSIS SETTINGS
@@ -87,13 +86,11 @@ git:
 # ═══════════════════════════════════════════════════════════════════════
 speckit:
   enabled: true
-  task_pattern: "- \\[.\\] T[0-9]+"  # Regex to match task lines
-  specs_glob: "specs/**/tasks.md"    # Where to find task files
+  task_pattern: "(\\*\\*)?T[0-9]+"  # Regex to match task IDs like T001 or **T001**
 
 # ═══════════════════════════════════════════════════════════════════════
 # OUTPUT SETTINGS
 # ═══════════════════════════════════════════════════════════════════════
 output:
   report_file: "IMPACT_REPORT.md"
-  json_file: "impact-metrics.json"   # Machine-readable output
-  include_file_details: true         # List individual files in report
+  json_file: "impact-metrics.json"
