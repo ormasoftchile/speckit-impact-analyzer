@@ -595,18 +595,23 @@ function Get-DiffMetrics {
         if ($Baseline) {
             $compareRef = if ($Compare) { $Compare } else { "HEAD" }
             $diffRange = "$Baseline..$compareRef"
+            Write-Info "Using baseline mode: $diffRange"
         } elseif ($Since) {
+            Write-Info "Using since mode: $Since"
             # Get commit range from date using proper argument passing
-            $gitArgs = @("log", "--format=%H")
-            $gitArgs += "--since=$Since"
+            $gitArgs = @("log", "--format=%H", "--since=$Since")
             if ($Until) { $gitArgs += "--until=$Until" }
             if ($Author) { $gitArgs += "--author=$Author" }
             
+            Write-Info "Git args: $($gitArgs -join ' ')"
             $commits = & git @gitArgs 2>$null
-            if ($commits) {
+            Write-Info "Found $(@($commits).Count) commits"
+            
+            if ($commits -and @($commits).Count -gt 0) {
                 $commitList = @($commits)
                 $firstCommit = $commitList[-1]
                 $lastCommit = $commitList[0]
+                Write-Info "First: $firstCommit, Last: $lastCommit"
                 # Get parent of first commit as baseline
                 $baselineCommit = & git rev-parse "$firstCommit^" 2>$null
                 if (-not $baselineCommit) {
@@ -615,6 +620,8 @@ function Get-DiffMetrics {
                 }
                 $diffRange = "$baselineCommit..$lastCommit"
             }
+        } else {
+            Write-Warn "Neither Baseline nor Since provided"
         }
         
         if (-not $diffRange) {
