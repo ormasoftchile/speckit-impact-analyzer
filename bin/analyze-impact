@@ -409,7 +409,17 @@ calculate_impact() {
         GRAND_AI_PERCENT=0
     fi
     
-    log_success "Analysis complete: ${AI_PERCENT_TOTAL}% AI-assisted, ${SAVED_PERCENT}% time saved"
+    # Calculate ACTUAL saved percent: (estimated - actual) / estimated * 100
+    # This compares what it WOULD have taken vs what it ACTUALLY took
+    if [[ $(echo "$GRAND_EST_TIME > 0" | bc) -eq 1 ]] && [[ $(echo "$GIT_ESTIMATED_HOURS > 0" | bc) -eq 1 ]]; then
+        ACTUAL_SAVED_HOURS=$(echo "scale=1; $GRAND_EST_TIME - $GIT_ESTIMATED_HOURS" | bc)
+        ACTUAL_SAVED_PERCENT=$(echo "scale=0; ($GRAND_EST_TIME - $GIT_ESTIMATED_HOURS) * 100 / $GRAND_EST_TIME" | bc)
+    else
+        ACTUAL_SAVED_HOURS=0
+        ACTUAL_SAVED_PERCENT=0
+    fi
+    
+    log_success "Analysis complete: ${AI_PERCENT_TOTAL}% AI-assisted, ${ACTUAL_SAVED_PERCENT}% time saved"
     if [[ $TEST_LOC -gt 0 ]]; then
         log_success "Tests: ${TEST_LOC} LoC (${AI_TEST}% AI-assisted), ${EST_TIME_TESTS}h manual → ${SAVED_TESTS}h saved"
     fi
@@ -441,9 +451,9 @@ generate_report() {
 |--------|-------|
 | **Total Source LoC** | ${TOTAL_LOC} |
 | **AI-Assisted LoC** | ${AI_LOC_TOTAL} (${AI_PERCENT_TOTAL}%) |
-| **Estimated Manual Time** | ${EST_TIME_TOTAL}h |
-| **Estimated Time Saved** | ${SAVED_TOTAL}h (${SAVED_PERCENT}%) |
+| **Estimated Manual Time** | ${GRAND_EST_TIME}h (source + tests) |
 | **Actual Dev Time** | ~${GIT_ESTIMATED_HOURS}h (${GIT_SESSION_COUNT} sessions) |
+| **Time Saved** | ${ACTUAL_SAVED_HOURS}h (${ACTUAL_SAVED_PERCENT}%) |
 
 ---
 
@@ -605,17 +615,16 @@ generate_json() {
     }
   },
   "time": {
-    "estimated_manual_hours": ${EST_TIME_TOTAL},
-    "estimated_saved_hours": ${SAVED_TOTAL},
-    "saved_percent": ${SAVED_PERCENT},
-    "actual_hours": ${GIT_ESTIMATED_HOURS:-0}
+    "estimated_manual_hours": ${GRAND_EST_TIME},
+    "actual_hours": ${GIT_ESTIMATED_HOURS:-0},
+    "saved_hours": ${ACTUAL_SAVED_HOURS:-0},
+    "saved_percent": ${ACTUAL_SAVED_PERCENT:-0}
   },
   "grand_total": {
     "loc": ${GRAND_TOTAL_LOC:-${TOTAL_LOC}},
     "ai_loc": ${GRAND_AI_LOC:-${AI_LOC_TOTAL}},
     "ai_percent": ${GRAND_AI_PERCENT:-${AI_PERCENT_TOTAL}},
-    "est_manual_hours": ${GRAND_EST_TIME:-${EST_TIME_TOTAL}},
-    "saved_hours": ${GRAND_SAVED:-${SAVED_TOTAL}}
+    "est_manual_hours": ${GRAND_EST_TIME:-${EST_TIME_TOTAL}}
   },
   "git": {
     "first_commit": "${GIT_FIRST_COMMIT:-}",
@@ -726,7 +735,8 @@ main() {
         echo -e "    • ${TEST_LOC} lines of test code (${AI_TEST}% AI-assisted)"
     fi
     echo -e "    • ${GRAND_EST_TIME}h estimated manual time (source + tests)"
-    echo -e "    • ${GRAND_SAVED}h saved (${SAVED_PERCENT}%)"
+    echo -e "    • ${GIT_ESTIMATED_HOURS}h actual dev time"
+    echo -e "    • ${ACTUAL_SAVED_HOURS}h saved (${ACTUAL_SAVED_PERCENT}%)"
     echo ""
     echo -e "  ${BOLD}Output:${NC}"
     echo -e "    • ${OUTPUT_FILE}"

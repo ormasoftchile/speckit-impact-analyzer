@@ -568,7 +568,8 @@ function Get-ImpactCalculations {
     param(
         [hashtable]$Classification,
         [hashtable]$Config,
-        [hashtable]$TestMetrics
+        [hashtable]$TestMetrics,
+        [hashtable]$GitMetrics
     )
     
     Write-Header "🧮 Calculating Impact"
@@ -613,7 +614,16 @@ function Get-ImpactCalculations {
     $grandAiLoc = $aiLocTotal + $aiLocTests
     $grandAiPercent = if ($grandTotalLoc -gt 0) { [math]::Floor($grandAiLoc * 100 / $grandTotalLoc) } else { 0 }
     
-    Write-Success "Analysis complete: ${aiPercentTotal}% AI-assisted, ${savedPercent}% time saved"
+    # Calculate ACTUAL saved: (estimated - actual) / estimated * 100
+    # This compares what it WOULD have taken vs what it ACTUALLY took
+    $actualSavedHours = 0
+    $actualSavedPercent = 0
+    if ($grandEstTime -gt 0 -and $GitMetrics.EstimatedHours -gt 0) {
+        $actualSavedHours = [math]::Round($grandEstTime - $GitMetrics.EstimatedHours, 1)
+        $actualSavedPercent = [math]::Floor(($grandEstTime - $GitMetrics.EstimatedHours) * 100 / $grandEstTime)
+    }
+    
+    Write-Success "Analysis complete: ${aiPercentTotal}% AI-assisted, ${actualSavedPercent}% time saved"
     
     return @{
         TotalLoc = $totalLoc
@@ -639,6 +649,8 @@ function Get-ImpactCalculations {
         GrandSaved = $grandSaved
         GrandAiLoc = $grandAiLoc
         GrandAiPercent = $grandAiPercent
+        ActualSavedHours = $actualSavedHours
+        ActualSavedPercent = $actualSavedPercent
     }
 }
 #endregion
@@ -689,8 +701,8 @@ function Write-MarkdownReport {
 | **Total Source LoC** | $($CodeMetrics.TotalLoc) |
 | **AI-Assisted LoC** | $($Impact.AiLocTotal) ($($Impact.AiPercentTotal)%) |
 | **Estimated Manual Time** | $($Impact.GrandEstTime)h (source + tests) |
-| **Estimated Time Saved** | $($Impact.GrandSaved)h ($($Impact.SavedPercent)%) |
 | **Actual Dev Time** | ~$($GitMetrics.EstimatedHours)h ($($GitMetrics.SessionCount) sessions) |
+| **Time Saved** | $($Impact.ActualSavedHours)h ($($Impact.ActualSavedPercent)%) |
 
 ---
 
@@ -962,17 +974,16 @@ function Write-JsonReport {
             }
         }
         time = @{
-            estimated_manual_hours = $Impact.EstTimeTotal
-            estimated_saved_hours = $Impact.SavedTotal
-            saved_percent = $Impact.SavedPercent
+            estimated_manual_hours = $Impact.GrandEstTime
             actual_hours = $GitMetrics.EstimatedHours
+            saved_hours = $Impact.ActualSavedHours
+            saved_percent = $Impact.ActualSavedPercent
         }
         grand_total = @{
             loc = $Impact.GrandTotalLoc
             ai_loc = $Impact.GrandAiLoc
             ai_percent = $Impact.GrandAiPercent
             est_manual_hours = $Impact.GrandEstTime
-            saved_hours = $Impact.GrandSaved
         }
         git = @{
             first_commit = $GitMetrics.FirstCommit
@@ -1034,7 +1045,7 @@ $specsPath = Join-Path $ProjectPath $config.SpecsDir
 $speckitMetrics = Get-SpeckitMetrics -SpecsPath $specsPath -Enabled $config.SpeckitEnabled
 
 # Calculate impact
-$impact = Get-ImpactCalculations -Classification $classification -Config $config -TestMetrics $testMetrics
+$impact = Get-ImpactCalculations -Classification $classification -Config $config -TestMetrics $testMetrics -GitMetrics $gitMetrics
 
 # Generate reports
 $reportPath = Join-Path $ProjectPath $OutputFile
@@ -1061,7 +1072,8 @@ if ($testMetrics.TestLoc -gt 0) {
     Write-Host "    • $($testMetrics.TestLoc) lines of test code ($($config.AiTest)% AI-assisted)"
 }
 Write-Host "    • $($impact.GrandEstTime)h estimated manual time (source + tests)"
-Write-Host "    • $($impact.GrandSaved)h saved ($($impact.SavedPercent)%)"
+Write-Host "    • $($gitMetrics.EstimatedHours)h actual dev time"
+Write-Host "    • $($impact.ActualSavedHours)h saved ($($impact.ActualSavedPercent)%)"
 Write-Host ""
 Write-Host "  Output:"
 Write-Host "    • $OutputFile"
