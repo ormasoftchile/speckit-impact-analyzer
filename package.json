@@ -11,7 +11,9 @@
   "scripts": {
     "analyze": "node src/cli.js",
     "portfolio": "node src/portfolio-cli.js",
-    "init": "node src/init-cli.js"
+    "init": "node src/init-cli.js",
+    "test": "bats test/*.bats",
+    "test:ps": "pwsh -Command \"Invoke-Pester -Path test/*.Tests.ps1 -Output Detailed\""
   },
   "keywords": ["spec-kit", "ai", "development", "metrics", "productivity"],
   "author": "Ormasoft",
