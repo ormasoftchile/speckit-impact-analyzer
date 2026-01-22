@@ -103,6 +103,7 @@ load_config() {
         PATTERN_GLUE=""
         PATTERN_LOGIC=""
         SPECKIT_ENABLED=true
+        SPECS_ROOT=""  # Empty means relative to PROJECT_PATH; can be absolute or relative to git root
         return
     fi
     
@@ -145,6 +146,9 @@ load_config() {
     else
         SPECKIT_ENABLED="$speckit_val"
     fi
+    
+    # Specs root - can be absolute, relative to project, or relative to git root
+    SPECS_ROOT=$(yq '.speckit.specs_root // ""' "$config_file")
 }
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -325,16 +329,52 @@ analyze_speckit() {
         return
     fi
     
-    local specs_path="${PROJECT_PATH}/${SPECS_DIR}"
+    # Determine specs path with fallback search
+    local specs_path=""
+    
+    # 1. If SPECS_ROOT is set, use it (absolute or relative to git root)
+    if [[ -n "$SPECS_ROOT" ]]; then
+        if [[ "$SPECS_ROOT" == /* ]]; then
+            # Absolute path
+            specs_path="$SPECS_ROOT"
+        else
+            # Relative to git root
+            local git_root
+            git_root=$(cd "$PROJECT_PATH" && git rev-parse --show-toplevel 2>/dev/null || echo "")
+            if [[ -n "$git_root" ]]; then
+                specs_path="${git_root}/${SPECS_ROOT}"
+            fi
+        fi
+    fi
+    
+    # 2. Try relative to PROJECT_PATH
+    if [[ -z "$specs_path" ]] || [[ ! -d "$specs_path" ]]; then
+        specs_path="${PROJECT_PATH}/${SPECS_DIR}"
+    fi
+    
+    # 3. Fallback: search git root for specs directory
+    if [[ ! -d "$specs_path" ]]; then
+        local git_root
+        git_root=$(cd "$PROJECT_PATH" && git rev-parse --show-toplevel 2>/dev/null || echo "")
+        if [[ -n "$git_root" ]] && [[ "$git_root" != "$PROJECT_PATH" ]]; then
+            local git_specs="${git_root}/${SPECS_DIR}"
+            if [[ -d "$git_specs" ]]; then
+                log_info "Found specs at git root: $git_specs"
+                specs_path="$git_specs"
+            fi
+        fi
+    fi
     
     if [[ ! -d "$specs_path" ]]; then
-        log_warn "Specs directory not found: $specs_path"
+        log_warn "Specs directory not found (searched project and git root)"
         SPEC_LINES=0
         SPEC_TASKS_TOTAL=0
         SPEC_TASKS_COMPLETE=0
         SPEC_FILES=0
         return
     fi
+    
+    log_info "Using specs from: $specs_path"
     
     # Count spec lines
     SPEC_LINES=$(find "$specs_path" -name "*.md" -exec cat {} \; 2>/dev/null | wc -l | tr -d ' ')

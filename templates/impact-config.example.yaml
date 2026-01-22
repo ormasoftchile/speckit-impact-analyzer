@@ -94,6 +94,10 @@ speckit:
   enabled: true
   task_pattern: "- \\[.\\] T[0-9]+"  # Regex to match task lines
   specs_glob: "specs/**/tasks.md"    # Where to find task files
+  # specs_root: "/path/to/repo"      # Optional: absolute path to specs location
+                                      # Use when analyzing a subfolder and specs
+                                      # are at the git root or elsewhere
+                                      # If not set, searches project path then git root
 
 # ═══════════════════════════════════════════════════════════════════════
 # OUTPUT SETTINGS

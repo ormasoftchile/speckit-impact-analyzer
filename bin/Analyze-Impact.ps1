@@ -80,6 +80,7 @@ function Get-DefaultConfig {
         SessionGapHours = 2
         SessionBufferMinutes = 30  # Configurable buffer per session
         SpeckitEnabled = $true
+        SpecsRoot = ""  # Empty means relative to ProjectPath; can be absolute or relative to git root
         # Classification patterns (regex) - can be overridden in config
         PatternBoilerplate = 'extension\.(ts|js)|types[/\\]|config[/\\]|\.d\.ts|config\.(ts|js)|layouts[/\\]|interfaces[/\\]'
         PatternGlue = 'commands[/\\]|utils[/\\]|webview[/\\]|handlers[/\\]|components[/\\]|pages[/\\]|hooks[/\\]|services[/\\]'
@@ -141,6 +142,7 @@ function Read-YamlConfig {
                     }
                     "speckit" {
                         if ($key -eq "enabled") { $config.SpeckitEnabled = $value -eq "true" }
+                        if ($key -eq "specs_root") { $config.SpecsRoot = $value.Trim('"').Trim("'") }
                     }
                 }
             }
@@ -518,7 +520,10 @@ function Get-GitTimeline {
 function Get-SpeckitMetrics {
     param(
         [string]$SpecsPath,
-        [bool]$Enabled
+        [bool]$Enabled,
+        [string]$SpecsRoot = "",
+        [string]$SpecsDir = "specs",
+        [string]$ProjectPath = ""
     )
     
     Write-Header "📋 Analyzing Spec-Kit Usage"
@@ -528,12 +533,58 @@ function Get-SpeckitMetrics {
         return @{ SpecLines = 0; TasksTotal = 0; TasksComplete = 0; SpecFiles = 0 }
     }
     
-    if (-not (Test-Path $SpecsPath)) {
-        Write-Warn "Specs directory not found: $SpecsPath"
+    # Determine specs path with fallback search
+    $effectiveSpecsPath = ""
+    
+    # 1. If SpecsRoot is set, use it (absolute or relative to git root)
+    if ($SpecsRoot) {
+        if ([System.IO.Path]::IsPathRooted($SpecsRoot)) {
+            # Absolute path
+            $effectiveSpecsPath = $SpecsRoot
+        } else {
+            # Relative to git root
+            Push-Location $ProjectPath
+            try {
+                $gitRoot = & git rev-parse --show-toplevel 2>$null
+                if ($gitRoot) {
+                    $effectiveSpecsPath = Join-Path $gitRoot $SpecsRoot
+                }
+            } finally {
+                Pop-Location
+            }
+        }
+    }
+    
+    # 2. Try the provided SpecsPath (relative to ProjectPath)
+    if (-not $effectiveSpecsPath -or -not (Test-Path $effectiveSpecsPath)) {
+        $effectiveSpecsPath = $SpecsPath
+    }
+    
+    # 3. Fallback: search git root for specs directory
+    if (-not (Test-Path $effectiveSpecsPath)) {
+        Push-Location $ProjectPath
+        try {
+            $gitRoot = & git rev-parse --show-toplevel 2>$null
+            if ($gitRoot -and $gitRoot -ne $ProjectPath) {
+                $gitSpecs = Join-Path $gitRoot $SpecsDir
+                if (Test-Path $gitSpecs) {
+                    Write-Info "Found specs at git root: $gitSpecs"
+                    $effectiveSpecsPath = $gitSpecs
+                }
+            }
+        } finally {
+            Pop-Location
+        }
+    }
+    
+    if (-not (Test-Path $effectiveSpecsPath)) {
+        Write-Warn "Specs directory not found (searched project and git root)"
         return @{ SpecLines = 0; TasksTotal = 0; TasksComplete = 0; SpecFiles = 0 }
     }
     
-    $specFiles = Get-ChildItem -Path $SpecsPath -Filter "*.md" -Recurse -File
+    Write-Info "Using specs from: $effectiveSpecsPath"
+    
+    $specFiles = Get-ChildItem -Path $effectiveSpecsPath -Filter "*.md" -Recurse -File
     $specLines = 0
     $tasksTotal = 0
     $tasksComplete = 0
@@ -1042,7 +1093,7 @@ $classification = Get-ClassifiedMetrics -FileMetrics $codeMetrics.Files -Pattern
 $gitMetrics = Get-GitTimeline -SessionGapHours $config.SessionGapHours -SessionBufferMinutes $config.SessionBufferMinutes -GitRootPath $GitRoot
 
 $specsPath = Join-Path $ProjectPath $config.SpecsDir
-$speckitMetrics = Get-SpeckitMetrics -SpecsPath $specsPath -Enabled $config.SpeckitEnabled
+$speckitMetrics = Get-SpeckitMetrics -SpecsPath $specsPath -Enabled $config.SpeckitEnabled -SpecsRoot $config.SpecsRoot -SpecsDir $config.SpecsDir -ProjectPath $ProjectPath
 
 # Calculate impact
 $impact = Get-ImpactCalculations -Classification $classification -Config $config -TestMetrics $testMetrics -GitMetrics $gitMetrics
