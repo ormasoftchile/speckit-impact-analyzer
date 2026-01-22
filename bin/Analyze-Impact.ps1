@@ -947,6 +947,13 @@ function Write-MarkdownReport {
 
     # Diff mode report
     if ($DiffMetrics -and $DiffMetrics.Enabled) {
+        # Build optional metadata rows
+        $metadataRows = ""
+        if ($DiffMetrics.Baseline) { $metadataRows += "| **Baseline Ref** | $($DiffMetrics.Baseline) |`n" }
+        if ($DiffMetrics.Since) { $metadataRows += "| **Since** | $($DiffMetrics.Since) |`n" }
+        if ($DiffMetrics.Until) { $metadataRows += "| **Until** | $($DiffMetrics.Until) |`n" }
+        if ($DiffMetrics.Author) { $metadataRows += "| **Author Filter** | $($DiffMetrics.Author) |`n" }
+        
         $report = @"
 # 📊 AI-Assisted Development Impact Report (Diff Mode)
 
@@ -969,7 +976,7 @@ function Write-MarkdownReport {
 | **Lines Added** | +$($DiffMetrics.LinesAdded) |
 | **Lines Removed** | -$($DiffMetrics.LinesRemoved) |
 | **Net Change** | $($DiffMetrics.NetLines) lines |
-$(if ($DiffMetrics.Baseline) { "| **Baseline Ref** | ``$($DiffMetrics.Baseline)`` |`n" } else { "" })$(if ($DiffMetrics.Since) { "| **Since** | $($DiffMetrics.Since) |`n" } else { "" })$(if ($DiffMetrics.Until) { "| **Until** | $($DiffMetrics.Until) |`n" } else { "" })$(if ($DiffMetrics.Author) { "| **Author Filter** | $($DiffMetrics.Author) |`n" } else { "" })
+$metadataRows
 ---
 
 ## Executive Summary
