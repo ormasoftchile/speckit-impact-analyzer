@@ -380,3 +380,190 @@ extract_table_value() {
     [ "$ai_loc" -ge 0 ]
     [ "$(echo "$est_hours >= 0" | bc)" -eq 1 ]
 }
+
+# ═══════════════════════════════════════════════════════════════════════
+# DIFF MODE INTEGRATION TESTS
+# These tests use the git repo already set up in setup()
+# ═══════════════════════════════════════════════════════════════════════
+
+@test "diff mode: --since triggers diff mode" {
+    cd "$TEST_PROJECT"
+    
+    # Get baseline before adding new file
+    local baseline=$(git rev-parse HEAD)
+    
+    # Add a new file after initial setup
+    echo "const newFeature = true;" > "$TEST_PROJECT/src/feature.ts"
+    git add .
+    git commit -q -m "add feature"
+    
+    # Run in diff mode (since a week ago should catch our commits)
+    "$SCRIPT" -q -j --since "1 week ago"
+    
+    local json=$(cat impact-metrics.json)
+    
+    # Verify diff mode was used
+    local mode=$(echo "$json" | jq -r '.analysis_mode')
+    [ "$mode" = "diff" ]
+    
+    local diff_enabled=$(echo "$json" | jq '.diff.enabled')
+    [ "$diff_enabled" = "true" ]
+}
+
+@test "diff mode: --baseline triggers diff mode" {
+    cd "$TEST_PROJECT"
+    
+    # Get current HEAD as baseline
+    local baseline=$(git rev-parse HEAD)
+    
+    # Add more files
+    echo "const update = 1;" > "$TEST_PROJECT/src/update.ts"
+    git add .
+    git commit -q -m "update"
+    
+    # Run with baseline comparison
+    "$SCRIPT" -q -j --baseline "$baseline"
+    
+    local json=$(cat impact-metrics.json)
+    
+    local mode=$(echo "$json" | jq -r '.analysis_mode')
+    [ "$mode" = "diff" ]
+    
+    local commits=$(echo "$json" | jq '.diff.commits')
+    [ "$commits" -ge 1 ]
+}
+
+@test "diff mode: reports lines added/removed correctly" {
+    cd "$TEST_PROJECT"
+    
+    local baseline=$(git rev-parse HEAD)
+    
+    # Add new file with known lines (5 lines)
+    cat > "$TEST_PROJECT/src/newfile.ts" << 'EOF'
+line1
+line2
+line3
+line4
+line5
+EOF
+    git add .
+    git commit -q -m "add 5 lines"
+    
+    "$SCRIPT" -q -j --baseline "$baseline"
+    
+    local json=$(cat impact-metrics.json)
+    
+    local lines_added=$(echo "$json" | jq '.diff.lines_added')
+    local files_created=$(echo "$json" | jq '.diff.files_created')
+    
+    # Should have exactly 5 lines added and 1 file created
+    [ "$lines_added" -eq 5 ]
+    [ "$files_created" -eq 1 ]
+}
+
+@test "diff mode: net_lines = lines_added - lines_removed" {
+    cd "$TEST_PROJECT"
+    
+    local baseline=$(git rev-parse HEAD)
+    
+    # Modify a file (replace 20+ lines with 1 line)
+    echo "new content" > "$TEST_PROJECT/src/core/engine.ts"
+    git add .
+    git commit -q -m "modify file"
+    
+    "$SCRIPT" -q -j --baseline "$baseline"
+    
+    local json=$(cat impact-metrics.json)
+    
+    local added=$(echo "$json" | jq '.diff.lines_added')
+    local removed=$(echo "$json" | jq '.diff.lines_removed')
+    local net=$(echo "$json" | jq '.diff.net_lines')
+    
+    # Verify net = added - removed
+    local expected=$((added - removed))
+    [ "$net" -eq "$expected" ]
+}
+
+@test "diff mode: snapshot mode when no diff options provided" {
+    cd "$TEST_PROJECT"
+    
+    # Run without diff options
+    "$SCRIPT" -q -j
+    
+    local json=$(cat impact-metrics.json)
+    
+    local mode=$(echo "$json" | jq -r '.analysis_mode')
+    [ "$mode" = "snapshot" ]
+    
+    local diff_enabled=$(echo "$json" | jq '.diff.enabled')
+    [ "$diff_enabled" = "false" ]
+}
+
+@test "diff mode: report shows Change Scope section" {
+    cd "$TEST_PROJECT"
+    
+    local baseline=$(git rev-parse HEAD)
+    
+    echo "feature" > "$TEST_PROJECT/src/feat.ts"
+    git add .
+    git commit -q -m "feature"
+    
+    "$SCRIPT" -q --baseline "$baseline"
+    
+    local report=$(cat IMPACT_REPORT.md)
+    
+    # Should have diff-specific sections
+    echo "$report" | grep -q "Change Scope"
+    echo "$report" | grep -q "Diff Mode"
+    echo "$report" | grep -q "Lines Added"
+}
+
+@test "diff mode: classifies test changes correctly" {
+    cd "$TEST_PROJECT"
+    
+    local baseline=$(git rev-parse HEAD)
+    
+    # Add test file (should be classified as test)
+    cat > "$TEST_PROJECT/test/newtest.ts" << 'EOF'
+describe('test', () => {
+    it('works', () => {
+        expect(true).toBe(true);
+    });
+});
+EOF
+    git add .
+    git commit -q -m "add test"
+    
+    "$SCRIPT" -q -j --baseline "$baseline"
+    
+    local json=$(cat impact-metrics.json)
+    
+    local test_loc=$(echo "$json" | jq '.tests.loc')
+    
+    # Test file has 5 lines
+    [ "$test_loc" -eq 5 ]
+}
+
+@test "diff mode: excludes node_modules from diff" {
+    cd "$TEST_PROJECT"
+    
+    local baseline=$(git rev-parse HEAD)
+    
+    # Add node_modules file (should be excluded)
+    mkdir -p "$TEST_PROJECT/node_modules/pkg"
+    echo "module.exports = {}" > "$TEST_PROJECT/node_modules/pkg/index.js"
+    
+    # Add source file (1 line)
+    echo "const x = 1;" > "$TEST_PROJECT/src/x.ts"
+    
+    git add -f .
+    git commit -q -m "add files"
+    
+    "$SCRIPT" -q -j --baseline "$baseline"
+    
+    local json=$(cat impact-metrics.json)
+    
+    # lines_added should only include src/x.ts (1 line), not node_modules
+    local lines_added=$(echo "$json" | jq '.diff.lines_added')
+    [ "$lines_added" -eq 1 ]
+}
