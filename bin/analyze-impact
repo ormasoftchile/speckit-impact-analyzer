@@ -858,7 +858,7 @@ EOF
 
 Traditional Development: ${GRAND_EST_TIME}h estimated  
 AI-Assisted Development: ${GIT_ESTIMATED_HOURS:-N/A}h actual  
-Productivity Gain: ~$(echo "scale=1; $GRAND_EST_TIME / ($GIT_ESTIMATED_HOURS + 0.1)" | bc 2>/dev/null || echo "N/A")x faster
+Productivity Gain: ~$(if [ "$(echo "${GIT_ESTIMATED_HOURS:-0} > 0" | bc)" -eq 1 ]; then echo "scale=1; $GRAND_EST_TIME / $GIT_ESTIMATED_HOURS" | bc 2>/dev/null || echo "N/A"; else echo "N/A"; fi)x faster
 
 ---
 
