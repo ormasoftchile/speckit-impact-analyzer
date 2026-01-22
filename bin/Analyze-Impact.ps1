@@ -6,6 +6,10 @@
 .DESCRIPTION
     Analyzes a project directory to calculate AI-assisted development metrics
     including code classification, time savings, and development timeline.
+    
+    Supports two modes:
+    - SNAPSHOT: Analyze the full codebase (default)
+    - DIFF: Analyze only changes in a time period or commit range
 
 .PARAMETER ProjectPath
     Path to the project directory (default: current directory)
@@ -22,11 +26,32 @@
 .PARAMETER Quiet
     Suppress progress output
 
+.PARAMETER Since
+    Diff mode: Analyze changes since date (e.g., "7 days ago", "2024-01-01")
+
+.PARAMETER Until
+    Diff mode: Analyze changes until date
+
+.PARAMETER Baseline
+    Diff mode: Start commit/tag for comparison
+
+.PARAMETER Compare
+    Diff mode: End commit/tag for comparison (default: HEAD)
+
+.PARAMETER Author
+    Diff mode: Filter commits by author name/email
+
 .EXAMPLE
     .\Analyze-Impact.ps1
     
 .EXAMPLE
     .\Analyze-Impact.ps1 -ProjectPath C:\MyProject -Json
+
+.EXAMPLE
+    .\Analyze-Impact.ps1 -Since "7 days ago"
+
+.EXAMPLE
+    .\Analyze-Impact.ps1 -Baseline "v1.0.0" -Compare "v2.0.0"
 #>
 
 [CmdletBinding()]
@@ -46,10 +71,16 @@ param(
     [switch]$Help,
     [Alias("g")]
     [string]$GitRoot = "",
-    [switch]$IncludeInlineTests
+    [switch]$IncludeInlineTests,
+    # Diff mode parameters
+    [string]$Since = "",
+    [string]$Until = "",
+    [string]$Baseline = "",
+    [string]$Compare = "",
+    [string]$Author = ""
 )
 
-$SCRIPT_VERSION = "1.1.0"
+$SCRIPT_VERSION = "2.0.0"
 
 #region Utility Functions
 function Write-Info { param([string]$Message) if (-not $Quiet) { Write-Host "i " -ForegroundColor Blue -NoNewline; Write-Host $Message } }
@@ -516,6 +547,180 @@ function Get-GitTimeline {
 }
 #endregion
 
+#region Diff Mode Analysis
+function Get-DiffMetrics {
+    param(
+        [string]$Since = "",
+        [string]$Until = "",
+        [string]$Baseline = "",
+        [string]$Compare = "",
+        [string]$Author = "",
+        [string]$GitRootPath = "",
+        [string[]]$ExcludeDirs = @()
+    )
+    
+    Write-Header "🔀 Analyzing Changes (Diff Mode)"
+    
+    $gitSearchPath = if ($GitRootPath) { $GitRootPath } else { $ProjectPath }
+    
+    # Find git root
+    if (-not (Test-Path (Join-Path $gitSearchPath ".git"))) {
+        $searchPath = $gitSearchPath
+        while ($searchPath -and -not (Test-Path (Join-Path $searchPath ".git"))) {
+            $parent = Split-Path $searchPath -Parent
+            if ($parent -eq $searchPath) { break }
+            $searchPath = $parent
+        }
+        if ($searchPath -and (Test-Path (Join-Path $searchPath ".git"))) {
+            $gitSearchPath = $searchPath
+        } else {
+            Write-Warn "Not a git repository"
+            return @{
+                Enabled = $false
+                CommitCount = 0
+                FilesCreated = 0
+                FilesModified = 0
+                FilesDeleted = 0
+                LinesAdded = 0
+                LinesRemoved = 0
+                NetLines = 0
+            }
+        }
+    }
+    
+    Push-Location $gitSearchPath
+    try {
+        # Build diff range
+        $diffRange = ""
+        if ($Baseline) {
+            $compareRef = if ($Compare) { $Compare } else { "HEAD" }
+            $diffRange = "$Baseline..$compareRef"
+        } elseif ($Since) {
+            $sinceArg = "--since=`"$Since`""
+            $untilArg = if ($Until) { "--until=`"$Until`"" } else { "" }
+            # Get commit range from date
+            $commits = & git log $sinceArg $untilArg --format="%H" 2>$null
+            if ($commits) {
+                $firstCommit = ($commits | Select-Object -Last 1)
+                $lastCommit = ($commits | Select-Object -First 1)
+                # Get parent of first commit as baseline
+                $baselineCommit = & git rev-parse "$firstCommit^" 2>$null
+                if (-not $baselineCommit) {
+                    # First commit in repo - use empty tree
+                    $baselineCommit = & git hash-object -t tree /dev/null 2>$null
+                    if (-not $baselineCommit) {
+                        $baselineCommit = "4b825dc642cb6eb9a060e54bf8d69288fbee4904" # Empty tree hash
+                    }
+                }
+                $diffRange = "$baselineCommit..$lastCommit"
+            }
+        }
+        
+        if (-not $diffRange) {
+            Write-Warn "Could not determine diff range"
+            return @{ Enabled = $false; CommitCount = 0 }
+        }
+        
+        # Add author filter to log
+        $authorArg = if ($Author) { "--author=`"$Author`"" } else { "" }
+        
+        # Get commit count
+        $logCmd = "git log --oneline $diffRange $authorArg 2>&1"
+        $commitOutput = Invoke-Expression $logCmd
+        $commitCount = if ($commitOutput) { ($commitOutput | Measure-Object).Count } else { 0 }
+        
+        Write-Info "Analyzing $commitCount commits in range: $diffRange"
+        
+        # Get diff stats
+        $diffStats = & git diff --numstat $diffRange 2>$null
+        
+        $linesAdded = 0
+        $linesRemoved = 0
+        $filesCreated = 0
+        $filesModified = 0
+        $filesDeleted = 0
+        
+        foreach ($line in $diffStats) {
+            if (-not $line) { continue }
+            $parts = $line -split '\t'
+            if ($parts.Count -lt 3) { continue }
+            
+            $added = $parts[0]
+            $removed = $parts[1]
+            $filename = $parts[2]
+            
+            # Skip binary files
+            if ($added -eq "-") { continue }
+            
+            # Skip excluded directories
+            $skip = $false
+            foreach ($exclude in $ExcludeDirs) {
+                if ($filename -like "$exclude*" -or $filename -like "*/$exclude/*") {
+                    $skip = $true
+                    break
+                }
+            }
+            if ($skip) { continue }
+            
+            $linesAdded += [int]$added
+            $linesRemoved += [int]$removed
+        }
+        
+        # Get file status
+        $statusOutput = & git diff --name-status $diffRange 2>$null
+        
+        foreach ($line in $statusOutput) {
+            if (-not $line) { continue }
+            $parts = $line -split '\t'
+            if ($parts.Count -lt 2) { continue }
+            
+            $status = $parts[0]
+            $filename = $parts[1]
+            
+            # Skip excluded directories
+            $skip = $false
+            foreach ($exclude in $ExcludeDirs) {
+                if ($filename -like "$exclude*" -or $filename -like "*/$exclude/*") {
+                    $skip = $true
+                    break
+                }
+            }
+            if ($skip) { continue }
+            
+            switch -Regex ($status) {
+                "^A" { $filesCreated++ }
+                "^D" { $filesDeleted++ }
+                "^[MRC]" { $filesModified++ }
+            }
+        }
+        
+        $netLines = $linesAdded - $linesRemoved
+        
+        Write-Success "Changed $($filesCreated + $filesModified + $filesDeleted) files: +$filesCreated new, ~$filesModified modified, -$filesDeleted deleted"
+        Write-Success "Lines: +$linesAdded / -$linesRemoved (net: $netLines)"
+        
+        return @{
+            Enabled = $true
+            DiffRange = $diffRange
+            CommitCount = $commitCount
+            FilesCreated = $filesCreated
+            FilesModified = $filesModified
+            FilesDeleted = $filesDeleted
+            LinesAdded = $linesAdded
+            LinesRemoved = $linesRemoved
+            NetLines = $netLines
+            Since = $Since
+            Until = $Until
+            Baseline = $Baseline
+            Compare = if ($Compare) { $Compare } else { "HEAD" }
+            Author = $Author
+        }
+    } finally {
+        Pop-Location
+    }
+}
+#endregion
+
 #region Spec-Kit Analysis
 function Get-SpeckitMetrics {
     param(
@@ -720,7 +925,8 @@ function Write-MarkdownReport {
         [hashtable]$GitMetrics,
         [hashtable]$SpeckitMetrics,
         [hashtable]$Impact,
-        [string]$OutputPath
+        [string]$OutputPath,
+        [hashtable]$DiffMetrics = $null
     )
     
     Write-Header "📝 Generating Report"
@@ -739,7 +945,93 @@ function Write-MarkdownReport {
         [math]::Round($Impact.GrandEstTime / $GitMetrics.EstimatedHours, 1)
     } else { "N/A" }
 
-    $report = @"
+    # Diff mode report
+    if ($DiffMetrics -and $DiffMetrics.Enabled) {
+        $report = @"
+# 📊 AI-Assisted Development Impact Report (Diff Mode)
+
+**Project**: $($Config.ProjectName)  
+**Type**: $($Config.ProjectType)  
+**Analysis Mode**: Changes Only (Diff)  
+**Generated**: $dateGenerated  
+**Analyzer Version**: $SCRIPT_VERSION
+
+---
+
+## 🔀 Change Scope
+
+| Metric | Value |
+|--------|-------|
+| **Commits Analyzed** | $($DiffMetrics.CommitCount) |
+| **Files Created** | +$($DiffMetrics.FilesCreated) |
+| **Files Modified** | ~$($DiffMetrics.FilesModified) |
+| **Files Deleted** | -$($DiffMetrics.FilesDeleted) |
+| **Lines Added** | +$($DiffMetrics.LinesAdded) |
+| **Lines Removed** | -$($DiffMetrics.LinesRemoved) |
+| **Net Change** | $($DiffMetrics.NetLines) lines |
+$(if ($DiffMetrics.Baseline) { "| **Baseline Ref** | ``$($DiffMetrics.Baseline)`` |`n" } else { "" })$(if ($DiffMetrics.Since) { "| **Since** | $($DiffMetrics.Since) |`n" } else { "" })$(if ($DiffMetrics.Until) { "| **Until** | $($DiffMetrics.Until) |`n" } else { "" })$(if ($DiffMetrics.Author) { "| **Author Filter** | $($DiffMetrics.Author) |`n" } else { "" })
+---
+
+## Executive Summary
+
+| Metric | Value |
+|--------|-------|
+| **Lines Changed** | $($DiffMetrics.LinesAdded) added |
+| **AI-Assisted** | $($Impact.AiLocTotal) ($($Impact.AiPercentTotal)%) |
+| **Estimated Manual Time** | $($Impact.GrandEstTime)h |
+| **Actual Dev Time** | ~$($GitMetrics.EstimatedHours)h ($($GitMetrics.SessionCount) sessions) |
+| **Time Saved** | $($Impact.ActualSavedHours)h ($($Impact.ActualSavedPercent)%) |
+
+---
+
+## 📈 Changes by Category
+
+| Category | Lines Added | AI-Assisted | Est. Manual | Time Saved |
+|----------|-------------|-------------|-------------|------------|
+| **Boilerplate** | $($Classification.Boilerplate.Loc) | $($Impact.AiLocBoilerplate) ($($Config.AiBoilerplate)%) | $($Impact.EstTimeBoilerplate)h | $($Impact.SavedBoilerplate)h |
+| **Glue Code** | $($Classification.Glue.Loc) | $($Impact.AiLocGlue) ($($Config.AiGlue)%) | $($Impact.EstTimeGlue)h | $($Impact.SavedGlue)h |
+| **Core Logic** | $($Classification.Logic.Loc) | $($Impact.AiLocLogic) ($($Config.AiLogic)%) | $($Impact.EstTimeLogic)h | $($Impact.SavedLogic)h |
+| **Tests** | $($TestMetrics.TestLoc) | $($Impact.AiLocTests) ($($Config.AiTest)%) | $($Impact.EstTimeTests)h | $($Impact.SavedTests)h |
+| **TOTAL** | $($DiffMetrics.LinesAdded) | $($Impact.GrandAiLoc) ($($Impact.GrandAiPercent)%) | $($Impact.GrandEstTime)h | $($Impact.GrandSaved)h |
+
+> **Note**: This report analyzes only the *changes* made, not the full codebase.
+
+---
+
+## ⏱️ Development Timeline
+
+| Metric | Value |
+|--------|-------|
+| **First Commit** | $($GitMetrics.FirstCommit) |
+| **Last Commit** | $($GitMetrics.LastCommit) |
+| **Total Commits** | $($DiffMetrics.CommitCount) |
+| **Dev Sessions** | $($GitMetrics.SessionCount) |
+| **Estimated Active Hours** | $($GitMetrics.EstimatedHours)h |
+
+---
+
+## 🎯 Key Insights
+
+### Productivity Multiplier
+
+Traditional Development: $($Impact.GrandEstTime)h estimated  
+AI-Assisted Development: $($GitMetrics.EstimatedHours)h actual  
+Productivity Gain: ~${productivityGain}x faster
+
+---
+
+## 📊 Methodology
+
+This report analyzes only the **changes** made during the specified period, not the full codebase.
+This provides accurate impact measurement for work on existing projects.
+
+---
+
+*Generated by [Spec-Kit Impact Analyzer](https://github.com/ormasoftchile/speckit-impact-analyzer) v$SCRIPT_VERSION*
+"@
+    } else {
+        # Snapshot mode report (original)
+        $report = @"
 # 📊 AI-Assisted Development Impact Report
 
 **Project**: $($Config.ProjectName)  
@@ -1073,18 +1365,33 @@ if ($ShowVersion) {
 # Resolve paths
 $ProjectPath = Resolve-Path $ProjectPath -ErrorAction Stop
 
+# Determine analysis mode
+$isDiffMode = $Since -or $Until -or $Baseline -or $Compare -or $Author
+$analysisMode = if ($isDiffMode) { "DIFF (changes only)" } else { "SNAPSHOT (full codebase)" }
+
 Write-Host ""
 Write-Host "═══════════════════════════════════════════════════════════════════════" -ForegroundColor Cyan
 Write-Host "  📊 Spec-Kit Impact Analyzer v$SCRIPT_VERSION (PowerShell Edition)" -ForegroundColor Cyan
+Write-Host "  Mode: $analysisMode" -ForegroundColor Cyan
 Write-Host "═══════════════════════════════════════════════════════════════════════" -ForegroundColor Cyan
 Write-Host "  Project: $ProjectPath"
 if ($GitRoot) { Write-Host "  Git Root: $GitRoot" }
 if ($IncludeInlineTests) { Write-Host "  Include Inline Tests: Yes" }
+if ($Since) { Write-Host "  Since: $Since" }
+if ($Baseline) { Write-Host "  Baseline: $Baseline" }
+if ($Author) { Write-Host "  Author: $Author" }
 Write-Host ""
 
 # Load configuration
 $configPath = Join-Path $ProjectPath $ConfigFile
 $config = Read-YamlConfig -Path $configPath
+
+# Diff mode metrics (if applicable)
+$diffMetrics = $null
+if ($isDiffMode) {
+    $diffMetrics = Get-DiffMetrics -Since $Since -Until $Until -Baseline $Baseline -Compare $Compare `
+        -Author $Author -GitRootPath $GitRoot -ExcludeDirs $config.ExcludeDirs
+}
 
 # Collect metrics
 $sourcePath = Join-Path $ProjectPath $config.SourceDir
@@ -1107,7 +1414,7 @@ $impact = Get-ImpactCalculations -Classification $classification -Config $config
 $reportPath = Join-Path $ProjectPath $OutputFile
 Write-MarkdownReport -Config $config -CodeMetrics $codeMetrics -TestMetrics $testMetrics `
     -Classification $classification -GitMetrics $gitMetrics -SpeckitMetrics $speckitMetrics `
-    -Impact $impact -OutputPath $reportPath
+    -Impact $impact -OutputPath $reportPath -DiffMetrics $diffMetrics
 
 if ($Json) {
     $jsonPath = Join-Path $ProjectPath "impact-metrics.json"
@@ -1123,11 +1430,16 @@ Write-Host "  √ Analysis Complete" -ForegroundColor Green
 Write-Host "═══════════════════════════════════════════════════════════════════════" -ForegroundColor Green
 Write-Host ""
 Write-Host "  Results:"
-Write-Host "    • $($codeMetrics.TotalLoc) lines of source code ($($impact.AiPercentTotal)% AI-assisted)"
-if ($testMetrics.TestLoc -gt 0) {
-    Write-Host "    • $($testMetrics.TestLoc) lines of test code ($($config.AiTest)% AI-assisted)"
+if ($isDiffMode -and $diffMetrics) {
+    Write-Host "    • $($diffMetrics.LinesAdded) lines added, $($diffMetrics.LinesRemoved) removed (net: $($diffMetrics.NetLines))"
+    Write-Host "    • $($diffMetrics.CommitCount) commits analyzed"
+} else {
+    Write-Host "    • $($codeMetrics.TotalLoc) lines of source code ($($impact.AiPercentTotal)% AI-assisted)"
+    if ($testMetrics.TestLoc -gt 0) {
+        Write-Host "    • $($testMetrics.TestLoc) lines of test code ($($config.AiTest)% AI-assisted)"
+    }
 }
-Write-Host "    • $($impact.GrandEstTime)h estimated manual time (source + tests)"
+Write-Host "    • $($impact.GrandEstTime)h estimated manual time"
 Write-Host "    • $($gitMetrics.EstimatedHours)h actual dev time"
 Write-Host "    • $($impact.ActualSavedHours)h saved ($($impact.ActualSavedPercent)%)"
 Write-Host ""
