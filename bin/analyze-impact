@@ -6,9 +6,12 @@
 
 set -euo pipefail
 
-VERSION="1.0.0"
+VERSION="2.0.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="${SCRIPT_DIR}/../lib"
+
+# Analysis mode: "snapshot" (legacy) or "diff" (new)
+ANALYSIS_MODE="snapshot"
 
 # Colors for output
 RED='\033[0;31m'
@@ -33,12 +36,16 @@ usage() {
     cat << EOF
 Usage: $(basename "$0") [OPTIONS] [PROJECT_PATH]
 
-Analyze AI-assisted development impact for a Spec-Kit project.
+Analyze AI-assisted development impact for a project.
+
+Modes:
+  Snapshot Mode (default): Analyze entire codebase as-is
+  Diff Mode: Analyze only changes between two points in git history
 
 Arguments:
   PROJECT_PATH    Path to project (default: current directory)
 
-Options:
+Common Options:
   -c, --config FILE    Config file path (default: impact-config.yaml)
   -o, --output FILE    Output report path (default: IMPACT_REPORT.md)
   -j, --json           Also output JSON metrics
@@ -46,11 +53,19 @@ Options:
   -v, --version        Show version
   -h, --help           Show this help
 
+Diff Mode Options (measures changes, not total codebase):
+  --since DATE         Analyze commits since date (e.g., "2025-01-01")
+  --until DATE         Analyze commits until date (default: now)
+  --baseline REF       Compare against git ref (commit, tag, branch)
+  --compare REF        Compare to git ref (default: HEAD)
+  --author PATTERN     Filter commits by author
+
 Examples:
-  $(basename "$0")                          # Analyze current directory
-  $(basename "$0") /path/to/project         # Analyze specific project
-  $(basename "$0") -c custom-config.yaml    # Use custom config
-  $(basename "$0") -j -o report.md          # Output JSON + custom report
+  $(basename "$0")                                    # Snapshot: analyze entire codebase
+  $(basename "$0") --since "2025-01-01"               # Diff: changes since date
+  $(basename "$0") --baseline v1.0.0 --compare HEAD   # Diff: changes between refs
+  $(basename "$0") --since "2025-01-01" --author "me" # Diff: my changes since date
+  $(basename "$0") -c custom-config.yaml -j           # Snapshot: custom config + JSON
 EOF
 }
 
@@ -394,6 +409,215 @@ analyze_speckit() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════
+# DIFF MODE ANALYSIS
+# Analyze git diff between two points rather than snapshot of codebase
+# ═══════════════════════════════════════════════════════════════════════
+
+collect_diff_metrics() {
+    log_header "📊 Collecting Diff Metrics"
+    
+    cd "$PROJECT_PATH"
+    
+    if [[ ! -d .git ]]; then
+        log_error "Diff mode requires a git repository"
+        exit 1
+    fi
+    
+    # Build git log/diff command based on options
+    local git_opts=()
+    
+    if [[ -n "$DIFF_SINCE" ]]; then
+        git_opts+=("--since=$DIFF_SINCE")
+    fi
+    if [[ -n "$DIFF_UNTIL" ]]; then
+        git_opts+=("--until=$DIFF_UNTIL")
+    fi
+    if [[ -n "$DIFF_AUTHOR" ]]; then
+        git_opts+=("--author=$DIFF_AUTHOR")
+    fi
+    
+    # Determine diff range
+    local diff_range=""
+    if [[ -n "$DIFF_BASELINE" ]]; then
+        diff_range="${DIFF_BASELINE}..${DIFF_COMPARE}"
+        log_info "Comparing: $DIFF_BASELINE → $DIFF_COMPARE"
+    else
+        # Use git log with date filters to find commit range
+        local first_commit last_commit
+        first_commit=$(git log "${git_opts[@]}" --format="%H" --reverse 2>/dev/null | head -1 || echo "")
+        last_commit=$(git log "${git_opts[@]}" --format="%H" -1 2>/dev/null || echo "")
+        
+        if [[ -z "$first_commit" ]]; then
+            log_error "No commits found matching the criteria"
+            exit 1
+        fi
+        
+        # Get parent of first commit as baseline (or empty tree if first commit)
+        local baseline
+        baseline=$(git rev-parse "${first_commit}^" 2>/dev/null || git hash-object -t tree /dev/null)
+        diff_range="${baseline}..${last_commit}"
+        log_info "Analyzing commits: ${first_commit:0:8}..${last_commit:0:8}"
+    fi
+    
+    # Count commits in range
+    DIFF_COMMIT_COUNT=$(git rev-list --count $diff_range 2>/dev/null || echo "0")
+    log_info "Found $DIFF_COMMIT_COUNT commits in range"
+    
+    # Get diff statistics
+    # Format: added deleted filename
+    local diff_stats
+    diff_stats=$(git diff --numstat $diff_range 2>/dev/null || echo "")
+    
+    # Initialize counters
+    DIFF_FILES_CREATED=0
+    DIFF_FILES_MODIFIED=0
+    DIFF_FILES_DELETED=0
+    DIFF_LINES_ADDED=0
+    DIFF_LINES_REMOVED=0
+    
+    while IFS=$'\t' read -r added removed filename; do
+        [[ -z "$filename" ]] && continue
+        # Skip binary files (shown as -)
+        [[ "$added" == "-" ]] && continue
+        
+        # Skip excluded directories
+        local skip=false
+        IFS=',' read -ra EXCLUDES <<< "$EXCLUDE_DIRS"
+        for exclude in "${EXCLUDES[@]}"; do
+            if [[ "$filename" == "$exclude"* ]] || [[ "$filename" == *"/$exclude/"* ]]; then
+                skip=true
+                break
+            fi
+        done
+        $skip && continue
+        
+        DIFF_LINES_ADDED=$((DIFF_LINES_ADDED + added))
+        DIFF_LINES_REMOVED=$((DIFF_LINES_REMOVED + removed))
+    done <<< "$diff_stats"
+    
+    DIFF_NET_LINES=$((DIFF_LINES_ADDED - DIFF_LINES_REMOVED))
+    
+    # Determine file status (created/modified/deleted) using diff --name-status
+    local status_output
+    status_output=$(git diff --name-status $diff_range 2>/dev/null || echo "")
+    
+    while IFS=$'\t' read -r status filename rest; do
+        [[ -z "$filename" ]] && continue
+        
+        # Skip excluded directories
+        local skip=false
+        IFS=',' read -ra EXCLUDES <<< "$EXCLUDE_DIRS"
+        for exclude in "${EXCLUDES[@]}"; do
+            if [[ "$filename" == "$exclude"* ]] || [[ "$filename" == *"/$exclude/"* ]]; then
+                skip=true
+                break
+            fi
+        done
+        $skip && continue
+        
+        case "$status" in
+            A) DIFF_FILES_CREATED=$((DIFF_FILES_CREATED + 1)) ;;
+            D) DIFF_FILES_DELETED=$((DIFF_FILES_DELETED + 1)) ;;
+            M|R*|C*) DIFF_FILES_MODIFIED=$((DIFF_FILES_MODIFIED + 1)) ;;
+        esac
+    done <<< "$status_output"
+    
+    DIFF_TOTAL_FILES=$((DIFF_FILES_CREATED + DIFF_FILES_MODIFIED + DIFF_FILES_DELETED))
+    
+    log_success "Changed $DIFF_TOTAL_FILES files: +$DIFF_FILES_CREATED new, ~$DIFF_FILES_MODIFIED modified, -$DIFF_FILES_DELETED deleted"
+    log_success "Lines: +$DIFF_LINES_ADDED / -$DIFF_LINES_REMOVED (net: $DIFF_NET_LINES)"
+    
+    # Store for later use
+    DIFF_RANGE="$diff_range"
+}
+
+classify_diff_changes() {
+    log_header "🏷️  Classifying Changes"
+    
+    cd "$PROJECT_PATH"
+    
+    # Initialize counters for changes
+    DIFF_LOC_BOILERPLATE=0
+    DIFF_LOC_GLUE=0
+    DIFF_LOC_LOGIC=0
+    DIFF_LOC_TESTS=0
+    
+    # Build classification patterns
+    local pattern_boilerplate="${PATTERN_BOILERPLATE:-extension\.ts|types/|config/|\.d\.ts|config\.ts|layouts/|interfaces/}"
+    local pattern_glue="${PATTERN_GLUE:-commands/|utils/|webview/|handlers/|components/|pages/|hooks/|services/}"
+    local pattern_tests="${TEST_DIR:-test/}"
+    
+    # Classify each changed file
+    local diff_stats
+    diff_stats=$(git diff --numstat $DIFF_RANGE 2>/dev/null || echo "")
+    
+    while IFS=$'\t' read -r added removed filename; do
+        [[ -z "$filename" ]] && continue
+        [[ "$added" == "-" ]] && continue
+        
+        # Skip excluded directories
+        local skip=false
+        IFS=',' read -ra EXCLUDES <<< "$EXCLUDE_DIRS"
+        for exclude in "${EXCLUDES[@]}"; do
+            if [[ "$filename" == "$exclude"* ]] || [[ "$filename" == *"/$exclude/"* ]]; then
+                skip=true
+                break
+            fi
+        done
+        $skip && continue
+        
+        # Net change for this file (added lines minus removed)
+        local net_change=$((added - removed))
+        # For classification, use added lines as the "effort" proxy
+        local change_loc=$added
+        
+        # Classify by file path
+        if [[ "$filename" == "$pattern_tests"* ]] || [[ "$filename" == *"/test/"* ]] || [[ "$filename" == *"_test."* ]] || [[ "$filename" == *".test."* ]] || [[ "$filename" == *".spec."* ]]; then
+            DIFF_LOC_TESTS=$((DIFF_LOC_TESTS + change_loc))
+        elif [[ -n "$pattern_boilerplate" ]] && [[ "$filename" =~ ($pattern_boilerplate) ]]; then
+            DIFF_LOC_BOILERPLATE=$((DIFF_LOC_BOILERPLATE + change_loc))
+        elif [[ -n "$pattern_glue" ]] && [[ "$filename" =~ ($pattern_glue) ]]; then
+            DIFF_LOC_GLUE=$((DIFF_LOC_GLUE + change_loc))
+        else
+            DIFF_LOC_LOGIC=$((DIFF_LOC_LOGIC + change_loc))
+        fi
+    done <<< "$diff_stats"
+    
+    DIFF_LOC_SOURCE=$((DIFF_LOC_BOILERPLATE + DIFF_LOC_GLUE + DIFF_LOC_LOGIC))
+    
+    log_success "Classified changes: Boilerplate=$DIFF_LOC_BOILERPLATE, Glue=$DIFF_LOC_GLUE, Logic=$DIFF_LOC_LOGIC, Tests=$DIFF_LOC_TESTS"
+}
+
+calculate_diff_impact() {
+    log_header "🧮 Calculating Impact (Diff Mode)"
+    
+    # Use DIFF_LOC_* instead of LOC_* for calculations
+    LOC_BOILERPLATE=$DIFF_LOC_BOILERPLATE
+    LOC_GLUE=$DIFF_LOC_GLUE
+    LOC_LOGIC=$DIFF_LOC_LOGIC
+    TOTAL_LOC=$DIFF_LOC_SOURCE
+    TEST_LOC=$DIFF_LOC_TESTS
+    
+    # Set file counts (not tracked by file in diff mode)
+    TOTAL_FILES=$DIFF_TOTAL_FILES
+    TEST_FILES=0
+    FILES_BOILERPLATE=0
+    FILES_GLUE=0
+    FILES_LOGIC=0
+    
+    # Initialize other variables that might not be set
+    TEST_RATIO=0
+    TOTAL_COMMENTS=0
+    TOTAL_BLANK=0
+    
+    # Now run the standard calculation
+    calculate_impact
+    
+    # Override with diff-specific messaging
+    log_success "Diff analysis: ${AI_PERCENT_TOTAL}% AI-assisted, ${ACTUAL_SAVED_PERCENT}% time saved"
+}
+
+# ═══════════════════════════════════════════════════════════════════════
 # CALCULATIONS
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -479,7 +703,70 @@ generate_report() {
     local report_file="${PROJECT_PATH}/${OUTPUT_FILE}"
     local date_generated=$(date "+%Y-%m-%d")
     
-    cat > "$report_file" << EOF
+    # Header section - different for diff vs snapshot mode
+    if [[ "$ANALYSIS_MODE" == "diff" ]]; then
+        cat > "$report_file" << 'HEADER_EOF'
+# 📊 AI-Assisted Development Impact Report (Diff Mode)
+HEADER_EOF
+        cat >> "$report_file" << EOF
+
+**Project**: ${PROJECT_NAME}  
+**Type**: ${PROJECT_TYPE}  
+**Analysis Mode**: Changes Only (Diff)  
+**Generated**: ${date_generated}  
+**Analyzer Version**: ${VERSION}
+
+---
+
+## 🔀 Change Scope
+
+| Metric | Value |
+|--------|-------|
+| **Commits Analyzed** | ${DIFF_COMMIT_COUNT} |
+| **Files Created** | +${DIFF_FILES_CREATED} |
+| **Files Modified** | ~${DIFF_FILES_MODIFIED} |
+| **Files Deleted** | -${DIFF_FILES_DELETED} |
+| **Lines Added** | +${DIFF_LINES_ADDED} |
+| **Lines Removed** | -${DIFF_LINES_REMOVED} |
+| **Net Change** | ${DIFF_NET_LINES} lines |
+EOF
+        [[ -n "$DIFF_BASELINE" ]] && echo "| **Baseline Ref** | \`${DIFF_BASELINE}\` |" >> "$report_file"
+        [[ -n "$DIFF_SINCE" ]] && echo "| **Since** | ${DIFF_SINCE} |" >> "$report_file"
+        [[ -n "$DIFF_UNTIL" ]] && echo "| **Until** | ${DIFF_UNTIL} |" >> "$report_file"
+        [[ -n "$DIFF_AUTHOR" ]] && echo "| **Author Filter** | ${DIFF_AUTHOR} |" >> "$report_file"
+        
+        cat >> "$report_file" << EOF
+
+---
+
+## Executive Summary
+
+| Metric | Value |
+|--------|-------|
+| **Lines Changed** | ${DIFF_LINES_ADDED} added |
+| **AI-Assisted** | ${AI_LOC_TOTAL} (${AI_PERCENT_TOTAL}%) |
+| **Estimated Manual Time** | ${GRAND_EST_TIME}h |
+| **Actual Dev Time** | ~${GIT_ESTIMATED_HOURS}h (${GIT_SESSION_COUNT} sessions) |
+| **Time Saved** | ${ACTUAL_SAVED_HOURS}h (${ACTUAL_SAVED_PERCENT}%) |
+
+---
+
+## 📈 Changes by Category
+
+| Category | Lines Added | AI-Assisted | Est. Manual | Time Saved |
+|----------|-------------|-------------|-------------|------------|
+| **Boilerplate** | ${LOC_BOILERPLATE} | ${AI_LOC_BOILERPLATE} (${AI_BOILERPLATE}%) | ${EST_TIME_BOILERPLATE}h | ${SAVED_BOILERPLATE}h |
+| **Glue Code** | ${LOC_GLUE} | ${AI_LOC_GLUE} (${AI_GLUE}%) | ${EST_TIME_GLUE}h | ${SAVED_GLUE}h |
+| **Core Logic** | ${LOC_LOGIC} | ${AI_LOC_LOGIC} (${AI_LOGIC}%) | ${EST_TIME_LOGIC}h | ${SAVED_LOGIC}h |
+| **Tests** | ${TEST_LOC} | ${AI_LOC_TESTS} (${AI_TEST}%) | ${EST_TIME_TESTS}h | ${SAVED_TESTS}h |
+| **TOTAL** | ${DIFF_LINES_ADDED} | ${GRAND_AI_LOC} (${GRAND_AI_PERCENT}%) | ${GRAND_EST_TIME}h | ${GRAND_SAVED}h |
+
+> **Note**: This report analyzes only the *changes* made, not the full codebase. This provides accurate impact measurement for work on existing projects.
+
+EOF
+    else
+        # Snapshot mode - original report format
+        cat > "$report_file" << EOF
 # 📊 AI-Assisted Development Impact Report
 
 **Project**: ${PROJECT_NAME}  
@@ -534,21 +821,13 @@ generate_report() {
 Writing comprehensive tests manually would have taken approximately **${EST_TIME_TESTS}h**. With AI assistance, an estimated **${SAVED_TESTS}h** was saved on test development alone.
 
 > **Test Effort Model**: Test code @ ${MULT_TEST}h/100 LoC, ${AI_TEST}% AI-assisted
-> 
-> Tests are highly amenable to AI generation because they follow predictable patterns (arrange-act-assert) and AI excels at generating edge cases and boilerplate setup.
 
 ---
-
-## 📊 Grand Total (Source + Tests)
-
-| Metric | Source | Tests | Combined |
-|--------|--------|-------|----------|
-| **Lines of Code** | ${TOTAL_LOC} | ${TEST_LOC} | ${GRAND_TOTAL_LOC} |
-| **AI-Assisted** | ${AI_LOC_TOTAL} | ${AI_LOC_TESTS} | ${GRAND_AI_LOC} (${GRAND_AI_PERCENT}%) |
-| **Est. Manual Time** | ${EST_TIME_TOTAL}h | ${EST_TIME_TESTS}h | ${GRAND_EST_TIME}h |
-| **Time Saved** | ${SAVED_TOTAL}h | ${SAVED_TESTS}h | ${GRAND_SAVED}h |
-
----
+EOF
+    fi
+    
+    # Common sections for both modes
+    cat >> "$report_file" << EOF
 
 ## ⏱️ Development Timeline
 
@@ -569,24 +848,17 @@ Writing comprehensive tests manually would have taken approximately **${EST_TIME
 | **Specification Lines** | ${SPEC_LINES} |
 | **Specification Files** | ${SPEC_FILES:-0} |
 | **Tasks Defined** | ${SPEC_TASKS_TOTAL} |
-| **Tasks Completed** | ${SPEC_TASKS_COMPLETE} ($([ "$SPEC_TASKS_TOTAL" -gt 0 ] && echo "scale=0; $SPEC_TASKS_COMPLETE * 100 / $SPEC_TASKS_TOTAL" | bc || echo "0")%) |
-| **Spec-to-Code Ratio** | $(echo "scale=1; $SPEC_LINES / ($TOTAL_LOC + 1)" | bc):1 |
+| **Tasks Completed** | ${SPEC_TASKS_COMPLETE} |
 
 ---
 
 ## 🎯 Key Insights
 
 ### Productivity Multiplier
-\`\`\`
-Traditional Development:  \${GRAND_EST_TIME}h estimated (source + tests)
-AI-Assisted Development:  \${GIT_ESTIMATED_HOURS:-"N/A"}h actual
-Productivity Gain:        ~\$(echo "scale=1; \$GRAND_EST_TIME / (\$GIT_ESTIMATED_HOURS + 0.1)" | bc 2>/dev/null || echo "N/A")x faster
-\`\`\`
 
-### Value of Spec-Kit Methodology
-- **Structured Planning**: ${SPEC_TASKS_TOTAL} discrete tasks defined upfront
-- **Clear Specifications**: ${SPEC_LINES} lines of requirements/design docs
-- **Execution Tracking**: ${SPEC_TASKS_COMPLETE}/${SPEC_TASKS_TOTAL} tasks completed
+Traditional Development: ${GRAND_EST_TIME}h estimated  
+AI-Assisted Development: ${GIT_ESTIMATED_HOURS:-N/A}h actual  
+Productivity Gain: ~$(echo "scale=1; $GRAND_EST_TIME / ($GIT_ESTIMATED_HOURS + 0.1)" | bc 2>/dev/null || echo "N/A")x faster
 
 ---
 
@@ -597,18 +869,27 @@ This report uses a conservative estimation model:
 1. **Code Classification**: Files categorized by complexity/AI-assist potential
 2. **Time Multipliers**: Industry-average hours per 100 LoC without AI
 3. **AI Assistance %**: Conservative estimates of Copilot contribution
-4. **Session Detection**: Git commits grouped by 2-hour gaps
+4. **Session Detection**: Git commits grouped by ${SESSION_GAP_HOURS:-2}-hour gaps
+EOF
+
+    if [[ "$ANALYSIS_MODE" == "diff" ]]; then
+        cat >> "$report_file" << 'EOF'
+5. **Diff Analysis**: Only lines added/modified are counted, not the full codebase
+EOF
+    fi
+
+    cat >> "$report_file" << EOF
 
 ### Assumptions & Limitations
 
-- Time multipliers are estimates based on typical TypeScript/VS Code development
+- Time multipliers are estimates based on typical development
 - AI assistance percentages are self-reported estimates
 - Actual productivity varies by developer experience and problem domain
 - Git session detection may under/over-estimate active coding time
 
 ---
 
-*Generated by [Spec-Kit Impact Analyzer](https://github.com/ormasoftchile/speckit-impact-analyzer) v\${VERSION}*
+*Generated by [Spec-Kit Impact Analyzer](https://github.com/ormasoftchile/speckit-impact-analyzer) v${VERSION}*
 EOF
 
     log_success "Report saved: $report_file"
@@ -625,6 +906,7 @@ generate_json() {
 {
   "version": "${VERSION}",
   "generated": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+  "analysis_mode": "${ANALYSIS_MODE}",
   "project": {
     "name": "${PROJECT_NAME}",
     "type": "${PROJECT_TYPE}"
@@ -681,6 +963,20 @@ generate_json() {
     "tasks_total": ${SPEC_TASKS_TOTAL:-0},
     "tasks_complete": ${SPEC_TASKS_COMPLETE:-0},
     "specs_path": "${RESOLVED_SPECS_PATH:-}"
+  },
+  "diff": {
+    "enabled": $([ "$ANALYSIS_MODE" == "diff" ] && echo "true" || echo "false"),
+    "baseline": "${DIFF_BASELINE:-}",
+    "compare": "${DIFF_COMPARE:-}",
+    "since": "${DIFF_SINCE:-}",
+    "until": "${DIFF_UNTIL:-}",
+    "commits": ${DIFF_COMMIT_COUNT:-0},
+    "files_created": ${DIFF_FILES_CREATED:-0},
+    "files_modified": ${DIFF_FILES_MODIFIED:-0},
+    "files_deleted": ${DIFF_FILES_DELETED:-0},
+    "lines_added": ${DIFF_LINES_ADDED:-0},
+    "lines_removed": ${DIFF_LINES_REMOVED:-0},
+    "net_lines": ${DIFF_NET_LINES:-0}
   }
 }
 EOF
@@ -700,6 +996,13 @@ main() {
     OUTPUT_JSON="false"
     QUIET="false"
     
+    # Diff mode options
+    DIFF_SINCE=""
+    DIFF_UNTIL=""
+    DIFF_BASELINE=""
+    DIFF_COMPARE="HEAD"
+    DIFF_AUTHOR=""
+    
     # Parse arguments
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -718,6 +1021,28 @@ main() {
             -q|--quiet)
                 QUIET="true"
                 shift
+                ;;
+            --since)
+                DIFF_SINCE="$2"
+                ANALYSIS_MODE="diff"
+                shift 2
+                ;;
+            --until)
+                DIFF_UNTIL="$2"
+                shift 2
+                ;;
+            --baseline)
+                DIFF_BASELINE="$2"
+                ANALYSIS_MODE="diff"
+                shift 2
+                ;;
+            --compare)
+                DIFF_COMPARE="$2"
+                shift 2
+                ;;
+            --author)
+                DIFF_AUTHOR="$2"
+                shift 2
                 ;;
             -v|--version)
                 echo "Spec-Kit Impact Analyzer v${VERSION}"
@@ -745,6 +1070,11 @@ main() {
     echo ""
     echo -e "${BOLD}═══════════════════════════════════════════════════════════════════════${NC}"
     echo -e "${BOLD}${CYAN}  📊 Spec-Kit Impact Analyzer v${VERSION}${NC}"
+    if [[ "$ANALYSIS_MODE" == "diff" ]]; then
+        echo -e "${BOLD}${YELLOW}  Mode: DIFF (analyzing changes only)${NC}"
+    else
+        echo -e "${BOLD}  Mode: SNAPSHOT (full codebase)${NC}"
+    fi
     echo -e "${BOLD}═══════════════════════════════════════════════════════════════════════${NC}"
     echo -e "  Project: ${PROJECT_PATH}"
     echo ""
@@ -755,15 +1085,22 @@ main() {
     # Load configuration
     load_config "${PROJECT_PATH}/${CONFIG_FILE}"
     
-    # Collect metrics
-    collect_code_metrics
-    collect_test_metrics
-    classify_files
-    analyze_git_timeline
-    analyze_speckit
-    
-    # Calculate impact
-    calculate_impact
+    if [[ "$ANALYSIS_MODE" == "diff" ]]; then
+        # Diff mode: analyze changes only
+        collect_diff_metrics
+        classify_diff_changes
+        analyze_git_timeline
+        analyze_speckit
+        calculate_diff_impact
+    else
+        # Snapshot mode: analyze entire codebase (legacy behavior)
+        collect_code_metrics
+        collect_test_metrics
+        classify_files
+        analyze_git_timeline
+        analyze_speckit
+        calculate_impact
+    fi
     
     # Generate outputs
     generate_report
@@ -774,12 +1111,21 @@ main() {
     echo -e "${GREEN}${BOLD}  ✓ Analysis Complete${NC}"
     echo -e "${BOLD}═══════════════════════════════════════════════════════════════════════${NC}"
     echo ""
-    echo -e "  ${BOLD}Results:${NC}"
-    echo -e "    • ${TOTAL_LOC} lines of source code (${AI_PERCENT_TOTAL}% AI-assisted)"
-    if [[ $TEST_LOC -gt 0 ]]; then
-        echo -e "    • ${TEST_LOC} lines of test code (${AI_TEST}% AI-assisted)"
+    
+    if [[ "$ANALYSIS_MODE" == "diff" ]]; then
+        echo -e "  ${BOLD}Changes Analyzed:${NC}"
+        echo -e "    • $DIFF_COMMIT_COUNT commits"
+        echo -e "    • +$DIFF_LINES_ADDED / -$DIFF_LINES_REMOVED lines (net: $DIFF_NET_LINES)"
+        echo -e "    • $DIFF_FILES_CREATED new, $DIFF_FILES_MODIFIED modified, $DIFF_FILES_DELETED deleted files"
+    else
+        echo -e "  ${BOLD}Results:${NC}"
+        echo -e "    • ${TOTAL_LOC} lines of source code (${AI_PERCENT_TOTAL}% AI-assisted)"
+        if [[ $TEST_LOC -gt 0 ]]; then
+            echo -e "    • ${TEST_LOC} lines of test code (${AI_TEST}% AI-assisted)"
+        fi
     fi
-    echo -e "    • ${GRAND_EST_TIME}h estimated manual time (source + tests)"
+    
+    echo -e "    • ${GRAND_EST_TIME}h estimated manual time"
     echo -e "    • ${GIT_ESTIMATED_HOURS}h actual dev time"
     echo -e "    • ${ACTUAL_SAVED_HOURS}h saved (${ACTUAL_SAVED_PERCENT}%)"
     echo ""
