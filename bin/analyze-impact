@@ -97,6 +97,11 @@ load_config() {
         AI_LOGIC=30
         
         SESSION_GAP_HOURS=2
+        SESSION_BUFFER_MINUTES=30
+        AI_EFFICIENCY_FACTOR=1.0
+        PATTERN_BOILERPLATE=""
+        PATTERN_GLUE=""
+        PATTERN_LOGIC=""
         SPECKIT_ENABLED=true
         return
     fi
@@ -122,6 +127,15 @@ load_config() {
     AI_TEST=$(yq '.ai_percent.tests // 75' "$config_file")
     
     SESSION_GAP_HOURS=$(yq '.git.session_gap_hours // 2' "$config_file")
+    SESSION_BUFFER_MINUTES=$(yq '.git.session_buffer_minutes // 30' "$config_file")
+    
+    # AI efficiency factor accounts for review/debug overhead (0.0-1.0)
+    AI_EFFICIENCY_FACTOR=$(yq '.ai_percent.efficiency_factor // 1.0' "$config_file")
+    
+    # Classification patterns from config (fallback to defaults if not set)
+    PATTERN_BOILERPLATE=$(yq '.classification.boilerplate | join("|") // ""' "$config_file")
+    PATTERN_GLUE=$(yq '.classification.glue_code | join("|") // ""' "$config_file")
+    PATTERN_LOGIC=$(yq '.classification.core_logic | join("|") // ""' "$config_file")
     
     # Handle boolean properly - yq's // operator doesn't work with false
     local speckit_val
@@ -215,23 +229,21 @@ classify_files() {
         return
     fi
     
-    # Read classification patterns from config
-    local config_file="${PROJECT_PATH}/${CONFIG_FILE}"
+    # Build classification patterns (use config or fall back to defaults)
+    local pattern_boilerplate="${PATTERN_BOILERPLATE:-extension\.ts|types/|config/|\.d\.ts|config\.ts|layouts/|interfaces/}"
+    local pattern_glue="${PATTERN_GLUE:-commands/|utils/|webview/|handlers/|components/|pages/|hooks/|services/}"
+    # Note: pattern_logic is used as fallback (files not matching boilerplate or glue)
     
-    # Get file list with LoC from cloc
-    local files_json
-    files_json=$(echo "$CLOC_BY_FILE" | jq 'to_entries | map(select(.key | startswith("src/") or startswith("./src/"))) | from_entries')
-    
-    # Simple classification based on path patterns
+    # Classify files based on path patterns
     while IFS= read -r file; do
         local loc
         loc=$(echo "$CLOC_BY_FILE" | jq --arg f "$file" '.[$f].code // 0')
         
-        # Classify based on path
-        if [[ "$file" =~ (extension\.ts|types/|config/|\.d\.ts|config\.ts|layouts/) ]]; then
+        # Classify based on config-driven patterns
+        if [[ -n "$pattern_boilerplate" ]] && [[ "$file" =~ ($pattern_boilerplate) ]]; then
             LOC_BOILERPLATE=$((LOC_BOILERPLATE + loc))
             FILES_BOILERPLATE=$((FILES_BOILERPLATE + 1))
-        elif [[ "$file" =~ (commands/|utils/|webview/|handlers/|components/|pages/) ]]; then
+        elif [[ -n "$pattern_glue" ]] && [[ "$file" =~ ($pattern_glue) ]]; then
             LOC_GLUE=$((LOC_GLUE + loc))
             FILES_GLUE=$((FILES_GLUE + 1))
         else
@@ -279,17 +291,19 @@ analyze_git_timeline() {
             session_start=$current
             session_count=1
         elif [[ $((current - prev_timestamp)) -gt $gap_seconds ]]; then
-            # New session - add previous session time
-            total_session_time=$((total_session_time + prev_timestamp - session_start + 1800)) # +30min buffer
+            # New session - add previous session time with configurable buffer
+            local buffer_seconds=$((SESSION_BUFFER_MINUTES * 60))
+            total_session_time=$((total_session_time + prev_timestamp - session_start + buffer_seconds))
             session_start=$current
             session_count=$((session_count + 1))
         fi
         prev_timestamp=$current
     done < <(git log --format="%ai" --reverse)
     
-    # Add final session
+    # Add final session with configurable buffer
     if [[ $prev_timestamp -gt 0 ]] && [[ $session_start -gt 0 ]]; then
-        total_session_time=$((total_session_time + prev_timestamp - session_start + 1800))
+        local buffer_seconds=$((SESSION_BUFFER_MINUTES * 60))
+        total_session_time=$((total_session_time + prev_timestamp - session_start + buffer_seconds))
     fi
     
     GIT_ESTIMATED_HOURS=$(echo "scale=1; $total_session_time / 3600" | bc)
@@ -354,10 +368,11 @@ calculate_impact() {
     EST_TIME_LOGIC=$(echo "scale=1; $LOC_LOGIC * $MULT_LOGIC / 100" | bc)
     EST_TIME_TOTAL=$(echo "scale=1; $EST_TIME_BOILERPLATE + $EST_TIME_GLUE + $EST_TIME_LOGIC" | bc)
     
-    # Time saved (proportional to AI assistance)
-    SAVED_BOILERPLATE=$(echo "scale=1; $EST_TIME_BOILERPLATE * $AI_BOILERPLATE / 100" | bc)
-    SAVED_GLUE=$(echo "scale=1; $EST_TIME_GLUE * $AI_GLUE / 100" | bc)
-    SAVED_LOGIC=$(echo "scale=1; $EST_TIME_LOGIC * $AI_LOGIC / 100" | bc)
+    # Time saved (proportional to AI assistance, adjusted by efficiency factor)
+    # AI_EFFICIENCY_FACTOR accounts for review/prompt/debug overhead (1.0 = no overhead, 0.7 = 30% overhead)
+    SAVED_BOILERPLATE=$(echo "scale=1; $EST_TIME_BOILERPLATE * $AI_BOILERPLATE / 100 * $AI_EFFICIENCY_FACTOR" | bc)
+    SAVED_GLUE=$(echo "scale=1; $EST_TIME_GLUE * $AI_GLUE / 100 * $AI_EFFICIENCY_FACTOR" | bc)
+    SAVED_LOGIC=$(echo "scale=1; $EST_TIME_LOGIC * $AI_LOGIC / 100 * $AI_EFFICIENCY_FACTOR" | bc)
     SAVED_TOTAL=$(echo "scale=1; $SAVED_BOILERPLATE + $SAVED_GLUE + $SAVED_LOGIC" | bc)
     
     # Percentages
@@ -380,7 +395,7 @@ calculate_impact() {
     
     EST_TIME_TESTS=$(echo "scale=1; $TEST_LOC * $MULT_TEST / 100" | bc)
     AI_LOC_TESTS=$(echo "scale=0; $TEST_LOC * $AI_TEST / 100" | bc)
-    SAVED_TESTS=$(echo "scale=1; $EST_TIME_TESTS * $AI_TEST / 100" | bc)
+    SAVED_TESTS=$(echo "scale=1; $EST_TIME_TESTS * $AI_TEST / 100 * $AI_EFFICIENCY_FACTOR" | bc)
     
     # Grand totals including tests
     GRAND_TOTAL_LOC=$((TOTAL_LOC + TEST_LOC))
@@ -509,9 +524,9 @@ Writing comprehensive tests manually would have taken approximately **${EST_TIME
 
 ### Productivity Multiplier
 \`\`\`
-Traditional Development:  ${EST_TIME_TOTAL}h estimated
-AI-Assisted Development:  ${GIT_ESTIMATED_HOURS:-"N/A"}h actual
-Productivity Gain:        ~$(echo "scale=1; $EST_TIME_TOTAL / ($GIT_ESTIMATED_HOURS + 0.1)" | bc 2>/dev/null || echo "N/A")x faster
+Traditional Development:  \${GRAND_EST_TIME}h estimated (source + tests)
+AI-Assisted Development:  \${GIT_ESTIMATED_HOURS:-"N/A"}h actual
+Productivity Gain:        ~\$(echo "scale=1; \$GRAND_EST_TIME / (\$GIT_ESTIMATED_HOURS + 0.1)" | bc 2>/dev/null || echo "N/A")x faster
 \`\`\`
 
 ### Value of Spec-Kit Methodology
@@ -536,137 +551,6 @@ This report uses a conservative estimation model:
 - AI assistance percentages are self-reported estimates
 - Actual productivity varies by developer experience and problem domain
 - Git session detection may under/over-estimate active coding time
-
----
-
-## 📖 Addendum: Metrics Glossary
-
-This section provides detailed explanations for each metric used in this report.
-
-### Executive Summary Metrics
-
-| Metric | Description |
-|--------|-------------|
-| **Total Source LoC** | Total lines of code in the source directory, excluding blank lines and comments. Counted using \`cloc\`. |
-| **AI-Assisted LoC** | Estimated lines of code where AI tools (e.g., GitHub Copilot) significantly contributed to writing or suggesting the code. |
-| **Estimated Manual Time** | Projected hours required to write this codebase without any AI assistance, based on industry-standard productivity multipliers. |
-| **Estimated Time Saved** | Hours saved by using AI-assisted development, calculated as a percentage of the estimated manual time. |
-| **Actual Dev Time** | Real development time estimated from git commit history, grouping commits into sessions separated by ${SESSION_GAP_HOURS}-hour gaps. |
-
-### Code Category Metrics
-
-| Metric | Description |
-|--------|-------------|
-| **Boilerplate** | Repetitive, structural code like entry points, type definitions, configuration schemas. High AI assistance potential (~90%). Multiplier: ${MULT_BOILERPLATE}h/100 LoC. |
-| **Glue Code** | Integration code connecting components: command handlers, event listeners, utility functions, UI bindings. Medium AI assistance (~70%). Multiplier: ${MULT_GLUE}h/100 LoC. |
-| **Core Logic** | Unique algorithms, business rules, and core functionality requiring human insight. Lower AI assistance (~30%). Multiplier: ${MULT_LOGIC}h/100 LoC. |
-| **Files** | Count of source files in each category. |
-| **LoC** | Lines of code (excluding blanks/comments) in each category. |
-| **AI-Assisted** | Estimated lines where AI contributed, based on category-specific AI assistance percentages. |
-| **Est. Manual** | Estimated hours to write code manually without AI, calculated as: \`LoC × Multiplier / 100\`. |
-| **Time Saved** | Hours saved by AI assistance, calculated as: \`Est. Manual × AI%\`. |
-
-### Test Code Metrics
-
-| Metric | Description |
-|--------|-------------|
-| **Test Files** | Number of files in the test directory. |
-| **Test LoC** | Lines of test code (excluding blanks/comments). |
-| **Test-to-Code Ratio** | Percentage of test code relative to source code: \`(Test LoC / Source LoC) × 100\`. |
-| **AI-Assisted Test LoC** | Estimated test lines where AI contributed. Tests are highly amenable to AI generation due to predictable patterns. |
-| **Est. Manual Test Time** | Hours to write tests manually, using multiplier: ${MULT_TEST:-1.5}h/100 LoC. |
-| **Test Time Saved** | Hours saved on test writing through AI assistance. |
-
-### Development Timeline Metrics
-
-| Metric | Description |
-|--------|-------------|
-| **First Commit** | Timestamp of the earliest commit in the repository. |
-| **Last Commit** | Timestamp of the most recent commit. |
-| **Total Commits** | Total number of commits in the repository history. |
-| **Dev Sessions** | Number of development sessions, where a session is a group of commits separated by ≤${SESSION_GAP_HOURS} hours. |
-| **Estimated Active Hours** | Total estimated coding time, summing session durations with a 30-minute buffer per session. |
-
-### Spec-Kit Metrics
-
-| Metric | Description |
-|--------|-------------|
-| **Specification Lines** | Total lines in specification/design documents (Markdown files in specs directory). |
-| **Specification Files** | Number of specification documents. |
-| **Tasks Defined** | Count of tasks defined in specs using pattern \`- [ ] T###\` or \`- [x] T###\`. |
-| **Tasks Completed** | Count of completed tasks (marked with \`[x]\`). |
-| **Spec-to-Code Ratio** | Ratio of specification lines to source code lines, indicating planning thoroughness. |
-
-### Grand Total Metrics
-
-| Metric | Description |
-|--------|-------------|
-| **Lines of Code** | Combined source + test LoC. |
-| **AI-Assisted** | Combined AI-assisted LoC from source and tests. |
-| **Est. Manual Time** | Total estimated hours for source + test code without AI. |
-| **Time Saved** | Total hours saved across source and test development. |
-
-### Productivity Metrics
-
-| Metric | Description |
-|--------|-------------|
-| **Productivity Multiplier** | Ratio of estimated manual time to actual development time: \`Est. Manual / Actual\`. Higher values indicate greater productivity gains from AI assistance. |
-
-### Configuration Parameters Used
-
-| Parameter | Value | Description |
-|-----------|-------|-------------|
-| **Session Gap** | ${SESSION_GAP_HOURS}h | Time gap used to separate git commits into distinct development sessions. |
-| **Boilerplate Multiplier** | ${MULT_BOILERPLATE}h/100 LoC | Estimated manual coding time for boilerplate code. |
-| **Glue Code Multiplier** | ${MULT_GLUE}h/100 LoC | Estimated manual coding time for integration code. |
-| **Core Logic Multiplier** | ${MULT_LOGIC}h/100 LoC | Estimated manual coding time for complex logic. |
-| **Test Multiplier** | ${MULT_TEST:-1.5}h/100 LoC | Estimated manual coding time for test code. |
-| **AI % Boilerplate** | ${AI_BOILERPLATE}% | Estimated AI contribution to boilerplate code. |
-| **AI % Glue Code** | ${AI_GLUE}% | Estimated AI contribution to glue code. |
-| **AI % Core Logic** | ${AI_LOGIC}% | Estimated AI contribution to core logic. |
-| **AI % Tests** | ${AI_TEST:-75}% | Estimated AI contribution to test code. |
-
----
-
-## 📚 References & Citations
-
-The metrics and assumptions in this report are based on the following industry research and standards:
-
-### AI-Assisted Development Productivity
-
-1. **Peng, S., Kalliamvakou, E., Cihon, P., & Demirer, M. (2023)**. "The Impact of AI on Developer Productivity: Evidence from GitHub Copilot." *arXiv:2302.06590*. 
-   - Key finding: Developers using GitHub Copilot completed tasks **55.8% faster** than the control group in a controlled experiment (P=.0017, 95% CI [21%, 89%]).
-   - URL: https://arxiv.org/abs/2302.06590
-
-2. **GitHub (2022)**. "Research: Quantifying GitHub Copilot's Impact on Developer Productivity and Happiness."
-   - Key findings: 87% of developers reported AI preserves mental effort during repetitive tasks; 73% reported staying in flow.
-   - URL: https://github.blog/news-insights/research/research-quantifying-github-copilots-impact-on-developer-productivity-and-happiness/
-
-### Software Development Productivity Baselines
-
-3. **McConnell, S. (2004)**. *Code Complete: A Practical Handbook of Software Construction*, 2nd Edition. Microsoft Press.
-   - Industry reference for software construction best practices and productivity estimates.
-   - Typical productivity ranges: 10-50 LoC/hour depending on complexity (Chapter 28: Managing Construction).
-
-4. **Jones, C. (2007)**. *Estimating Software Costs: Bringing Realism to Estimating*, 2nd Edition. McGraw-Hill.
-   - Provides industry benchmarks for software development productivity across different project types.
-
-5. **COCOMO II Model (Boehm et al., 2000)**. *Software Cost Estimation with COCOMO II*. Prentice Hall.
-   - The Constructive Cost Model provides effort estimation formulas based on project size and complexity factors.
-
-### Methodology Notes
-
-| Assumption | Basis | Citation |
-|------------|-------|----------|
-| **Time Multipliers** | Based on industry averages for TypeScript/JavaScript development, adjusted for VS Code extension complexity. | McConnell (2004), Jones (2007) |
-| **AI Assistance % (Boilerplate: 90%)** | Repetitive code patterns show highest AI suggestion acceptance rates. | GitHub (2022), Peng et al. (2023) |
-| **AI Assistance % (Glue: 70%)** | Integration code benefits significantly but requires more human judgment. | GitHub (2022) |
-| **AI Assistance % (Core Logic: 30%)** | Complex algorithms require substantial human insight; AI assists with syntax/patterns. | Peng et al. (2023) |
-| **AI Assistance % (Tests: 75%)** | Test code follows predictable patterns (arrange-act-assert); AI excels at generating edge cases. | GitHub (2022) |
-| **55% Task Completion Speed Increase** | Controlled experiment with 95 professional developers. | Peng et al. (2023) |
-| **Session Detection (2h gap)** | Standard assumption for development session boundaries in git analytics. | Industry practice |
-
-> **Disclaimer**: Time estimates are approximations based on published research and industry benchmarks. Actual productivity varies significantly based on developer experience, problem domain, codebase familiarity, and tooling proficiency. AI assistance percentages are conservative estimates based on the types of code typically generated with AI pair programming tools.
 
 ---
 

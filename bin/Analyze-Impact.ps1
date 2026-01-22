@@ -76,8 +76,14 @@ function Get-DefaultConfig {
         AiGlue = 70
         AiLogic = 30
         AiTest = 75
+        AiEfficiencyFactor = 1.0  # Accounts for review/debug overhead (0.0-1.0)
         SessionGapHours = 2
+        SessionBufferMinutes = 30  # Configurable buffer per session
         SpeckitEnabled = $true
+        # Classification patterns (regex) - can be overridden in config
+        PatternBoilerplate = 'extension\.(ts|js)|types[/\\]|config[/\\]|\.d\.ts|config\.(ts|js)|layouts[/\\]|interfaces[/\\]'
+        PatternGlue = 'commands[/\\]|utils[/\\]|webview[/\\]|handlers[/\\]|components[/\\]|pages[/\\]|hooks[/\\]|services[/\\]'
+        PatternLogic = ''  # Empty means "everything else"
     }
 }
 
@@ -317,15 +323,19 @@ function Get-TestMetrics {
 }
 
 function Get-FileClassification {
-    param([string]$RelativePath)
+    param(
+        [string]$RelativePath,
+        [string]$PatternBoilerplate = 'extension\.(ts|js)|types[/\\]|config[/\\]|\.d\.ts|config\.(ts|js)|layouts[/\\]|interfaces[/\\]',
+        [string]$PatternGlue = 'commands[/\\]|utils[/\\]|webview[/\\]|handlers[/\\]|components[/\\]|pages[/\\]|hooks[/\\]|services[/\\]'
+    )
     
-    # Boilerplate patterns
-    if ($RelativePath -match '(extension\.(ts|js)|types[/\\]|config[/\\]|\.d\.ts|config\.(ts|js)|layouts[/\\]|interfaces[/\\])') {
+    # Boilerplate patterns (from config or default)
+    if ($PatternBoilerplate -and $RelativePath -match $PatternBoilerplate) {
         return "Boilerplate"
     }
     
-    # Glue code patterns
-    if ($RelativePath -match '(commands[/\\]|utils[/\\]|webview[/\\]|handlers[/\\]|components[/\\]|pages[/\\]|hooks[/\\]|services[/\\])') {
+    # Glue code patterns (from config or default)
+    if ($PatternGlue -and $RelativePath -match $PatternGlue) {
         return "Glue"
     }
     
@@ -334,7 +344,11 @@ function Get-FileClassification {
 }
 
 function Get-ClassifiedMetrics {
-    param([array]$FileMetrics)
+    param(
+        [array]$FileMetrics,
+        [string]$PatternBoilerplate = '',
+        [string]$PatternGlue = ''
+    )
     
     Write-Header "🏷️  Classifying Files"
     
@@ -343,7 +357,7 @@ function Get-ClassifiedMetrics {
     $logicLoc = 0; $logicFiles = 0
     
     foreach ($file in $FileMetrics) {
-        $classification = Get-FileClassification -RelativePath $file.RelativePath
+        $classification = Get-FileClassification -RelativePath $file.RelativePath -PatternBoilerplate $PatternBoilerplate -PatternGlue $PatternGlue
         
         switch ($classification) {
             "Boilerplate" { $boilerplateLoc += $file.Code; $boilerplateFiles++ }
@@ -366,6 +380,7 @@ function Get-ClassifiedMetrics {
 function Get-GitTimeline {
     param(
         [int]$SessionGapHours = 2,
+        [int]$SessionBufferMinutes = 30,
         [string]$GitRootPath = "",
         [string]$SubfolderFilter = ""
     )
@@ -450,6 +465,7 @@ function Get-GitTimeline {
         
         # Calculate sessions
         $gapSeconds = $SessionGapHours * 3600
+        $bufferSeconds = $SessionBufferMinutes * 60
         $sessionCount = 1
         $totalSessionTime = 0
         $prevTimestamp = $null
@@ -466,7 +482,7 @@ function Get-GitTimeline {
                     $sessionStart = $current
                 }
                 elseif (($current - $prevTimestamp).TotalSeconds -gt $gapSeconds) {
-                    $totalSessionTime += ($prevTimestamp - $sessionStart).TotalSeconds + 1800
+                    $totalSessionTime += ($prevTimestamp - $sessionStart).TotalSeconds + $bufferSeconds
                     $sessionStart = $current
                     $sessionCount++
                 }
@@ -475,9 +491,9 @@ function Get-GitTimeline {
             catch { }
         }
         
-        # Add final session
+        # Add final session with configurable buffer
         if ($null -ne $prevTimestamp -and $null -ne $sessionStart) {
-            $totalSessionTime += ($prevTimestamp - $sessionStart).TotalSeconds + 1800
+            $totalSessionTime += ($prevTimestamp - $sessionStart).TotalSeconds + $bufferSeconds
         }
         
         $estimatedHours = [math]::Round($totalSessionTime / 3600, 1)
@@ -573,16 +589,17 @@ function Get-ImpactCalculations {
     $estTimeLogic = [math]::Round($locLogic * $Config.MultLogic / 100, 1)
     $estTimeTotal = $estTimeBoilerplate + $estTimeGlue + $estTimeLogic
     
-    # Time saved
-    $savedBoilerplate = [math]::Round($estTimeBoilerplate * $Config.AiBoilerplate / 100, 1)
-    $savedGlue = [math]::Round($estTimeGlue * $Config.AiGlue / 100, 1)
-    $savedLogic = [math]::Round($estTimeLogic * $Config.AiLogic / 100, 1)
+    # Time saved (adjusted by efficiency factor to account for review/debug overhead)
+    $efficiencyFactor = $Config.AiEfficiencyFactor
+    $savedBoilerplate = [math]::Round($estTimeBoilerplate * $Config.AiBoilerplate / 100 * $efficiencyFactor, 1)
+    $savedGlue = [math]::Round($estTimeGlue * $Config.AiGlue / 100 * $efficiencyFactor, 1)
+    $savedLogic = [math]::Round($estTimeLogic * $Config.AiLogic / 100 * $efficiencyFactor, 1)
     $savedTotal = $savedBoilerplate + $savedGlue + $savedLogic
     
     # Test calculations
     $estTimeTests = [math]::Round($TestMetrics.TestLoc * $Config.MultTest / 100, 1)
     $aiLocTests = [math]::Floor($TestMetrics.TestLoc * $Config.AiTest / 100)
-    $savedTests = [math]::Round($estTimeTests * $Config.AiTest / 100, 1)
+    $savedTests = [math]::Round($estTimeTests * $Config.AiTest / 100 * $efficiencyFactor, 1)
     
     # Totals
     $totalLoc = $locBoilerplate + $locGlue + $locLogic
@@ -652,7 +669,7 @@ function Write-MarkdownReport {
     } else { 0 }
     
     $productivityGain = if ($GitMetrics.EstimatedHours -gt 0) {
-        [math]::Round($Impact.EstTimeTotal / $GitMetrics.EstimatedHours, 1)
+        [math]::Round($Impact.GrandEstTime / $GitMetrics.EstimatedHours, 1)
     } else { "N/A" }
 
     $report = @"
@@ -671,8 +688,8 @@ function Write-MarkdownReport {
 |--------|-------|
 | **Total Source LoC** | $($CodeMetrics.TotalLoc) |
 | **AI-Assisted LoC** | $($Impact.AiLocTotal) ($($Impact.AiPercentTotal)%) |
-| **Estimated Manual Time** | $($Impact.EstTimeTotal)h |
-| **Estimated Time Saved** | $($Impact.SavedTotal)h ($($Impact.SavedPercent)%) |
+| **Estimated Manual Time** | $($Impact.GrandEstTime)h (source + tests) |
+| **Estimated Time Saved** | $($Impact.GrandSaved)h ($($Impact.SavedPercent)%) |
 | **Actual Dev Time** | ~$($GitMetrics.EstimatedHours)h ($($GitMetrics.SessionCount) sessions) |
 
 ---
@@ -746,7 +763,7 @@ function Write-MarkdownReport {
 
 ### Productivity Multiplier
 ``````
-Traditional Development:  $($Impact.EstTimeTotal)h estimated
+Traditional Development:  $($Impact.GrandEstTime)h estimated (source + tests)
 AI-Assisted Development:  $($GitMetrics.EstimatedHours)h actual
 Productivity Gain:        ~${productivityGain}x faster
 ``````
@@ -1009,9 +1026,9 @@ $codeMetrics = Get-CodeMetrics -SourcePath $sourcePath -ExcludeDirs $config.Excl
 $testPath = Join-Path $ProjectPath $config.TestDir
 $testMetrics = Get-TestMetrics -TestPath $testPath -ExcludeDirs $config.ExcludeDirs -TotalLoc $codeMetrics.TotalLoc -IncludeInlineTests $IncludeInlineTests -SourcePath $sourcePath
 
-$classification = Get-ClassifiedMetrics -FileMetrics $codeMetrics.Files
+$classification = Get-ClassifiedMetrics -FileMetrics $codeMetrics.Files -PatternBoilerplate $config.PatternBoilerplate -PatternGlue $config.PatternGlue
 
-$gitMetrics = Get-GitTimeline -SessionGapHours $config.SessionGapHours -GitRootPath $GitRoot
+$gitMetrics = Get-GitTimeline -SessionGapHours $config.SessionGapHours -SessionBufferMinutes $config.SessionBufferMinutes -GitRootPath $GitRoot
 
 $specsPath = Join-Path $ProjectPath $config.SpecsDir
 $speckitMetrics = Get-SpeckitMetrics -SpecsPath $specsPath -Enabled $config.SpeckitEnabled
