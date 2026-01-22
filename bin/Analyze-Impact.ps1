@@ -596,21 +596,22 @@ function Get-DiffMetrics {
             $compareRef = if ($Compare) { $Compare } else { "HEAD" }
             $diffRange = "$Baseline..$compareRef"
         } elseif ($Since) {
-            $sinceArg = "--since=`"$Since`""
-            $untilArg = if ($Until) { "--until=`"$Until`"" } else { "" }
-            # Get commit range from date
-            $commits = & git log $sinceArg $untilArg --format="%H" 2>$null
+            # Get commit range from date using proper argument passing
+            $gitArgs = @("log", "--format=%H")
+            $gitArgs += "--since=$Since"
+            if ($Until) { $gitArgs += "--until=$Until" }
+            if ($Author) { $gitArgs += "--author=$Author" }
+            
+            $commits = & git @gitArgs 2>$null
             if ($commits) {
-                $firstCommit = ($commits | Select-Object -Last 1)
-                $lastCommit = ($commits | Select-Object -First 1)
+                $commitList = @($commits)
+                $firstCommit = $commitList[-1]
+                $lastCommit = $commitList[0]
                 # Get parent of first commit as baseline
                 $baselineCommit = & git rev-parse "$firstCommit^" 2>$null
                 if (-not $baselineCommit) {
-                    # First commit in repo - use empty tree
-                    $baselineCommit = & git hash-object -t tree /dev/null 2>$null
-                    if (-not $baselineCommit) {
-                        $baselineCommit = "4b825dc642cb6eb9a060e54bf8d69288fbee4904" # Empty tree hash
-                    }
+                    # First commit in repo - use empty tree hash
+                    $baselineCommit = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
                 }
                 $diffRange = "$baselineCommit..$lastCommit"
             }
@@ -618,16 +619,13 @@ function Get-DiffMetrics {
         
         if (-not $diffRange) {
             Write-Warn "Could not determine diff range"
+            Write-Warn "Make sure commits exist in the specified date range"
             return @{ Enabled = $false; CommitCount = 0 }
         }
         
-        # Add author filter to log
-        $authorArg = if ($Author) { "--author=`"$Author`"" } else { "" }
-        
         # Get commit count
-        $logCmd = "git log --oneline $diffRange $authorArg 2>&1"
-        $commitOutput = Invoke-Expression $logCmd
-        $commitCount = if ($commitOutput) { ($commitOutput | Measure-Object).Count } else { 0 }
+        $commitOutput = & git log --oneline $diffRange 2>$null
+        $commitCount = if ($commitOutput) { @($commitOutput).Count } else { 0 }
         
         Write-Info "Analyzing $commitCount commits in range: $diffRange"
         
