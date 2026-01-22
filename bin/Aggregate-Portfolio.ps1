@@ -123,7 +123,7 @@ foreach ($file in $JsonFiles) {
         $aiLoc = if ($data.ai_assisted.total_loc) { $data.ai_assisted.total_loc } else { 0 }
         $aiPct = if ($data.ai_assisted.percent) { $data.ai_assisted.percent } else { 0 }
         $estManual = if ($data.time.estimated_manual_hours) { $data.time.estimated_manual_hours } else { 0 }
-        $saved = if ($data.time.estimated_saved_hours) { $data.time.estimated_saved_hours } else { 0 }
+        $saved = if ($data.time.saved_hours) { $data.time.saved_hours } else { 0 }
         $savedPct = if ($data.time.saved_percent) { $data.time.saved_percent } else { 0 }
         $actual = if ($data.time.actual_hours) { $data.time.actual_hours } else { 0 }
         $commits = if ($data.git.total_commits) { $data.git.total_commits } else { 0 }

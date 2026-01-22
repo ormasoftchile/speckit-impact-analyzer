@@ -140,7 +140,7 @@ main() {
         local ai_loc=$(jq -r '.ai_assisted.total_loc // 0' "$file")
         local ai_pct=$(jq -r '.ai_assisted.percent // 0' "$file")
         local est_manual=$(jq -r '.time.estimated_manual_hours // 0' "$file")
-        local saved=$(jq -r '.time.estimated_saved_hours // 0' "$file")
+        local saved=$(jq -r '.time.saved_hours // 0' "$file")
         local saved_pct=$(jq -r '.time.saved_percent // 0' "$file")
         local actual=$(jq -r '.time.actual_hours // 0' "$file")
         local commits=$(jq -r '.git.total_commits // 0' "$file")
