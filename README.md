@@ -148,10 +148,47 @@ speckit-init . -f                       # Overwrite existing
 ### `speckit-analyze` - Run Analysis
 
 ```bash
-speckit-analyze /path/to/project        # Basic analysis
+speckit-analyze /path/to/project        # Basic analysis (snapshot mode)
 speckit-analyze /path/to/project -j     # Also output JSON metrics
 speckit-analyze /path/to/project -v     # Verbose output
 ```
+
+### Diff Mode (v2.0.0+)
+
+Analyze only the **changes** made in a time period or commit range, instead of the full codebase. This is ideal for:
+- Measuring impact of a specific sprint or milestone
+- Analyzing contributions by a specific author
+- Tracking productivity on existing/legacy projects
+
+```bash
+# Analyze changes from the last 7 days
+speckit-analyze /path/to/project --since "7 days ago"
+
+# Analyze changes between two commits
+speckit-analyze /path/to/project --baseline abc123 --compare def456
+
+# Analyze a specific author's contributions
+speckit-analyze /path/to/project --since "2024-01-01" --author "john@example.com"
+
+# Combine options
+speckit-analyze /path/to/project --since "1 month ago" --author "alice"
+```
+
+**Diff Mode Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--since <date>` | Analyze changes since date (e.g., "7 days ago", "2024-01-01") |
+| `--until <date>` | Analyze changes until date (default: now) |
+| `--baseline <ref>` | Start commit/tag for comparison |
+| `--compare <ref>` | End commit/tag for comparison (default: HEAD) |
+| `--author <pattern>` | Filter commits by author name/email |
+
+**Diff Mode Report includes:**
+- Lines added/removed/net change
+- Files created/modified/deleted
+- AI-assisted percentage of changes
+- Time saved on the changed code only
 
 **PowerShell Parameters:**
 
@@ -164,6 +201,11 @@ speckit-analyze /path/to/project -v     # Verbose output
 | `-Quiet` | `-q` | Suppress progress output |
 | `-GitRoot` | `-g` | Path to git repository root (for subfolder projects) |
 | `-IncludeInlineTests` | | Include `*.test.ts`, `*.spec.ts` files from source dir |
+| `-Since` | | Diff mode: analyze changes since date |
+| `-Until` | | Diff mode: analyze changes until date |
+| `-Baseline` | | Diff mode: start commit/tag |
+| `-Compare` | | Diff mode: end commit/tag (default: HEAD) |
+| `-Author` | | Diff mode: filter by author |
 | `-ShowVersion` | `-v` | Show version and exit |
 | `-Help` | `-h` | Show help |
 
