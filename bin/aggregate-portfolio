@@ -130,6 +130,9 @@ main() {
     local total_test_saved=0
     local project_count=${#json_files[@]}
     
+    # Track unique specs paths to deduplicate (projects sharing same specs root)
+    declare -A seen_specs_paths
+    
     # Build project rows
     local project_rows=""
     
@@ -147,6 +150,7 @@ main() {
         local spec_lines=$(jq -r '.speckit.spec_lines // 0' "$file")
         local tasks=$(jq -r '.speckit.tasks_total // 0' "$file")
         local tasks_complete=$(jq -r '.speckit.tasks_complete // 0' "$file")
+        local specs_path=$(jq -r '.speckit.specs_path // ""' "$file")
         
         # Test metrics
         local test_loc=$(jq -r '.tests.loc // 0' "$file")
@@ -173,9 +177,20 @@ main() {
         total_saved=$(echo "$total_saved + $saved" | bc)
         total_actual=$(echo "$total_actual + $actual" | bc)
         total_commits=$((total_commits + commits))
-        total_spec_lines=$((total_spec_lines + spec_lines))
-        total_tasks=$((total_tasks + tasks))
-        total_tasks_complete=$((total_tasks_complete + tasks_complete))
+        
+        # Deduplicate speckit metrics: only count each specs_path once
+        if [[ -n "$specs_path" ]] && [[ -z "${seen_specs_paths[$specs_path]:-}" ]]; then
+            seen_specs_paths["$specs_path"]=1
+            total_spec_lines=$((total_spec_lines + spec_lines))
+            total_tasks=$((total_tasks + tasks))
+            total_tasks_complete=$((total_tasks_complete + tasks_complete))
+        elif [[ -z "$specs_path" ]] && [[ $spec_lines -gt 0 ]]; then
+            # Legacy: no specs_path but has spec data (pre-update JSON)
+            total_spec_lines=$((total_spec_lines + spec_lines))
+            total_tasks=$((total_tasks + tasks))
+            total_tasks_complete=$((total_tasks_complete + tasks_complete))
+        fi
+        # Note: if specs_path already seen, skip to avoid double-counting
         total_test_loc=$((total_test_loc + test_loc))
         total_test_files=$((total_test_files + test_files))
         total_test_saved=$(echo "$total_test_saved + $test_saved" | bc)

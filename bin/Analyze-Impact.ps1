@@ -579,12 +579,15 @@ function Get-SpeckitMetrics {
     
     if (-not (Test-Path $effectiveSpecsPath)) {
         Write-Warn "Specs directory not found (searched project and git root)"
-        return @{ SpecLines = 0; TasksTotal = 0; TasksComplete = 0; SpecFiles = 0 }
+        return @{ SpecLines = 0; TasksTotal = 0; TasksComplete = 0; SpecFiles = 0; SpecsPath = "" }
     }
     
-    Write-Info "Using specs from: $effectiveSpecsPath"
+    # Resolve to absolute path for deduplication in portfolio aggregator
+    $resolvedSpecsPath = (Resolve-Path $effectiveSpecsPath).Path
     
-    $specFiles = Get-ChildItem -Path $effectiveSpecsPath -Filter "*.md" -Recurse -File
+    Write-Info "Using specs from: $resolvedSpecsPath"
+    
+    $specFiles = Get-ChildItem -Path $resolvedSpecsPath -Filter "*.md" -Recurse -File
     $specLines = 0
     $tasksTotal = 0
     $tasksComplete = 0
@@ -610,6 +613,7 @@ function Get-SpeckitMetrics {
         TasksTotal = $tasksTotal
         TasksComplete = $tasksComplete
         SpecFiles = $specFiles.Count
+        SpecsPath = $resolvedSpecsPath
     }
 }
 #endregion
@@ -1046,6 +1050,7 @@ function Write-JsonReport {
             spec_lines = $SpeckitMetrics.SpecLines
             tasks_total = $SpeckitMetrics.TasksTotal
             tasks_complete = $SpeckitMetrics.TasksComplete
+            specs_path = $SpeckitMetrics.SpecsPath
         }
     }
     

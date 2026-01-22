@@ -104,6 +104,7 @@ load_config() {
         PATTERN_LOGIC=""
         SPECKIT_ENABLED=true
         SPECS_ROOT=""  # Empty means relative to PROJECT_PATH; can be absolute or relative to git root
+        RESOLVED_SPECS_PATH=""  # Will be set by analyze_speckit
         return
     fi
     
@@ -371,10 +372,13 @@ analyze_speckit() {
         SPEC_TASKS_TOTAL=0
         SPEC_TASKS_COMPLETE=0
         SPEC_FILES=0
+        RESOLVED_SPECS_PATH=""
         return
     fi
     
-    log_info "Using specs from: $specs_path"
+    # Store resolved path for JSON output (enables deduplication in portfolio aggregator)
+    RESOLVED_SPECS_PATH=$(cd "$specs_path" && pwd)
+    log_info "Using specs from: $RESOLVED_SPECS_PATH"
     
     # Count spec lines
     SPEC_LINES=$(find "$specs_path" -name "*.md" -exec cat {} \; 2>/dev/null | wc -l | tr -d ' ')
@@ -675,7 +679,8 @@ generate_json() {
   "speckit": {
     "spec_lines": ${SPEC_LINES:-0},
     "tasks_total": ${SPEC_TASKS_TOTAL:-0},
-    "tasks_complete": ${SPEC_TASKS_COMPLETE:-0}
+    "tasks_complete": ${SPEC_TASKS_COMPLETE:-0},
+    "specs_path": "${RESOLVED_SPECS_PATH:-}"
   }
 }
 EOF

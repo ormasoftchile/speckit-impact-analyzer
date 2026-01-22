@@ -110,6 +110,9 @@ $totalTestFiles = 0
 $totalTestSaved = 0
 $projectCount = $JsonFiles.Count
 
+# Track unique specs paths to deduplicate (projects sharing same specs root)
+$seenSpecsPaths = @{}
+
 $projectRows = @()
 $chartData = @()  # For mermaid charts
 
@@ -130,6 +133,7 @@ foreach ($file in $JsonFiles) {
         $specLines = if ($data.speckit.spec_lines) { $data.speckit.spec_lines } else { 0 }
         $tasks = if ($data.speckit.tasks_total) { $data.speckit.tasks_total } else { 0 }
         $tasksComplete = if ($data.speckit.tasks_complete) { $data.speckit.tasks_complete } else { 0 }
+        $specsPath = if ($data.speckit.specs_path) { $data.speckit.specs_path } else { "" }
         
         # Test metrics
         $testLoc = if ($data.tests.loc) { $data.tests.loc } else { 0 }
@@ -162,9 +166,20 @@ foreach ($file in $JsonFiles) {
         $totalSaved += $saved
         $totalActual += $actual
         $totalCommits += $commits
-        $totalSpecLines += $specLines
-        $totalTasks += $tasks
-        $totalTasksComplete += $tasksComplete
+        
+        # Deduplicate speckit metrics: only count each specs_path once
+        if ($specsPath -and -not $seenSpecsPaths.ContainsKey($specsPath)) {
+            $seenSpecsPaths[$specsPath] = $true
+            $totalSpecLines += $specLines
+            $totalTasks += $tasks
+            $totalTasksComplete += $tasksComplete
+        } elseif (-not $specsPath -and $specLines -gt 0) {
+            # Legacy: no specs_path but has spec data (pre-update JSON)
+            $totalSpecLines += $specLines
+            $totalTasks += $tasks
+            $totalTasksComplete += $tasksComplete
+        }
+        # Note: if specsPath already seen, skip to avoid double-counting
         $totalTestLoc += $testLoc
         $totalTestFiles += $testFiles
         $totalTestSaved += $testSaved
