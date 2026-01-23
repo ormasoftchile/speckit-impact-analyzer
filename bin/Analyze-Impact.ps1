@@ -598,14 +598,22 @@ function Get-DiffMetrics {
             Write-Info "Using baseline mode: $diffRange"
         } elseif ($Since) {
             Write-Info "Using since mode: $Since"
-            # Get commit range from date using proper argument passing
-            $gitArgs = @("log", "--format=%H", "--since=$Since")
-            if ($Until) { $gitArgs += "--until=$Until" }
-            if ($Author) { $gitArgs += "--author=$Author" }
+            # Build arguments as separate strings for proper splatting
+            $sinceArg = "--since=$Since"
+            $gitArgs = @("log", "--format=%H", $sinceArg)
+            if ($Until) { 
+                $untilArg = "--until=$Until"
+                $gitArgs += $untilArg 
+            }
+            if ($Author) { 
+                $authorArg = "--author=$Author"
+                $gitArgs += $authorArg 
+            }
             
             Write-Info "Git args: $($gitArgs -join ' ')"
-            $commits = & git @gitArgs 2>$null
-            Write-Info "Found $(@($commits).Count) commits"
+            $commits = & git $gitArgs 2>$null
+            $commitCount = if ($commits) { @($commits).Count } else { 0 }
+            Write-Info "Found $commitCount commits"
             
             if ($commits -and @($commits).Count -gt 0) {
                 $commitList = @($commits)
